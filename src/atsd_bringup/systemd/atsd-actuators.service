@@ -1,0 +1,23 @@
+[Unit]
+Description=ATSD | Свет, лента, замок
+After=network-online.target
+PartOf=atsd.target
+
+[Service]
+Type=simple
+User=atsd
+Group=atsd
+WorkingDirectory=/opt/atsd
+Environment=HOME=/opt/atsd
+Environment=ROS_DOMAIN_ID=17
+Environment=GPIOZERO_PIN_FACTORY=lgpio
+Environment=RCUTILS_LOGGING_BUFFERED_STREAM=1
+Restart=always
+TimeoutStopSec=15
+KillSignal=SIGINT
+SupplementaryGroups=gpio i2c dialout
+RestartSec=3
+ExecStart=/opt/atsd/run.sh ros2 launch atsd_bringup actuators.launch.py
+
+[Install]
+WantedBy=atsd.target

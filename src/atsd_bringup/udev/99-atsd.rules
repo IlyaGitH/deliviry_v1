@@ -1,0 +1,22 @@
+# ============================================================
+#  АТСД-1М · стабильные имена устройств
+#  Без этого ttyACM0/ttyACM1/ttyUSB0 меняются местами
+#  после перезагрузки, и узлы стартуют не с тем железом.
+#
+#  Установка:
+#    sudo cp 99-atsd.rules /etc/udev/rules.d/
+#    sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+#  ID берутся из вывода lsusb. Подставьте свои!
+# ============================================================
+
+# VEX V5 Brain: пользовательский порт — старший из двух ACM.
+# Проверить: udevadm info -a -n /dev/ttyACM1 | grep -E 'idVendor|idProduct|interface'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2888", ATTRS{idProduct}=="0501", ATTRS{bInterfaceNumber}=="02", SYMLINK+="v5", MODE="0666"
+
+# YDLIDAR X2L через адаптер CP2102
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="ydlidar", MODE="0666"
+
+# BN-880 подключён к аппаратному UART Raspberry, не к USB.
+# Симлинк на встроенный порт Pi 5:
+KERNEL=="ttyAMA0", SYMLINK+="gnss", MODE="0666"

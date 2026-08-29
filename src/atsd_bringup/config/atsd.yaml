@@ -1,0 +1,97 @@
+# ============================================================
+#  АТСД-1М · параметры нижней подсистемы
+#  Один файл на все узлы. Правится здесь, а не в коде.
+# ============================================================
+
+v5_bridge:
+  ros__parameters:
+    port: /dev/v5                # udev-симлинк, см. udev/99-atsd.rules
+    baud: 115200
+
+    # ── ГЕОМЕТРИЯ ──
+    # Эти три числа определяют всю одометрию.
+    # Подбираются рулеткой, паспортные значения врут на 2-3 %,
+    # а это метр увода на дистанции 50 м.
+    wheel_diameter_mm: 101.6
+    track_mm: 410.0
+    gear_ratio: 1.0
+
+    cmd_rate_hz: 20.0
+    cmd_timeout_s: 0.5           # дублирует watchdog в прошивке V5
+    odom_frame: odom
+    base_frame: base_link
+    publish_tf: true
+    use_brain_heading: false     # true — курс с гироскопа V5 вместо счисления
+
+light_node:
+  ros__parameters:
+    headlight_pin: 18            # физический пин 12
+    strip_pin: 13                # физический пин 33
+    pwm_freq_hz: 200
+
+    # ── ТОКОВЫЙ БЮДЖЕТ ──
+    # Шина 12 В тянет около 1,4 А. Потолки не поднимать без
+    # пересчёта: просадка уронит Raspberry посреди заезда.
+    headlight_ceiling: 0.6
+    strip_ceiling: 0.5
+
+    ramp_time_s: 0.5             # плавный пуск, гасит бросок тока
+    blink_period_s: 1.0
+    beacon_period_s: 0.35
+    dim_on_lock: true            # интерлок с замком
+    tick_hz: 50.0
+    dry_run: false
+
+lock_node:
+  ros__parameters:
+    lock_pin: 19                 # физический пин 35
+    door_sensor_pin: 27          # физический пин 13, геркон
+    use_door_sensor: false       # включить, когда геркон будет установлен
+    pulse_time_s: 0.4            # дольше держать нельзя: ED соленоида 10 %
+    cooldown_s: 3.0
+    dry_run: false
+
+gnss_node:
+  ros__parameters:
+    port: /dev/gnss
+    baud: 9600                   # BN-880 из коробки; после настройки 115200
+    frame_id: gnss_link
+    publish_rate_hz: 5.0
+    min_satellites: 4
+
+# ── Драйвер камеры v4l2_camera ──
+v4l2_camera:
+  ros__parameters:
+    video_device: /dev/video0
+    pixel_format: MJPG           # без MJPG получите 5 кадров вместо 30
+    output_encoding: rgb8
+    image_size: [1280, 720]
+    camera_frame_id: camera_link
+    time_per_frame: [1, 30]
+
+# ── Драйвер лидара YDLIDAR X2L ──
+# Ключевой параметр — isSingleChannel. Без него драйвер
+# валится на чтении информации об устройстве.
+ydlidar_ros2_driver_node:
+  ros__parameters:
+    port: /dev/ydlidar
+    frame_id: laser_frame
+    ignore_array: ""
+    baudrate: 115200
+    lidar_type: 1
+    device_type: 0
+    sample_rate: 3
+    abnormal_check_count: 4
+    fixed_resolution: true
+    reversion: false
+    inverted: true
+    auto_reconnect: true
+    isSingleChannel: true
+    intensity: false
+    support_motor_dtr: true
+    angle_max: 180.0
+    angle_min: -180.0
+    range_max: 8.0
+    range_min: 0.10
+    frequency: 7.0
+    invalid_range_is_inf: false
