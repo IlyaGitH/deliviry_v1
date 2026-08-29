@@ -82,6 +82,7 @@ Namespace нет, топики плоские: так их без прослое
 
 ```bash
 git clone https://github.com/IlyaGitH/deliviry_v1 ~/atsd_ws
+chmod +x src/atsd_bringup/scripts/install.sh src/atsd_bringup/systemd/run.sh
 cd ~/atsd_ws/src/atsd_bringup/scripts
 sudo bash install.sh
 sudo reboot
