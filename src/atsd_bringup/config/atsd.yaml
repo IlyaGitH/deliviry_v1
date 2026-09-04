@@ -59,6 +59,19 @@ gnss_node:
     publish_rate_hz: 5.0
     min_satellites: 4
 
+battery_node:
+  ros__parameters:
+    i2c_bus: 1
+    address: 0x36              # гейдж X1202, совместим с MAX17040
+    cells: 4
+    rate_hz: 1.0
+    low_pct: 20.0
+
+web_node:
+  ros__parameters:
+    mock: false                # true — телеметрия из имитатора, без робота
+    port: 8080
+
 # ── Драйвер камеры v4l2_camera ──
 v4l2_camera:
   ros__parameters:

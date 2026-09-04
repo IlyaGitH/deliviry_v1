@@ -31,6 +31,10 @@ def generate_launch_description():
                          ('/camera_info', '/camera/camera_info')],
              condition=IfCondition(use_camera)),
 
+        Node(package='atsd_sensors', executable='battery_node',
+             name='battery_node', parameters=[cfg],
+             output='screen', respawn=True, respawn_delay=5.0),
+
         Node(package='atsd_sensors', executable='gnss_node',
              name='gnss_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=3.0,

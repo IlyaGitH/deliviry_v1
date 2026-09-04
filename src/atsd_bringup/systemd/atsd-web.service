@@ -1,0 +1,26 @@
+[Unit]
+Description=ATSD | Веб-интерфейс заказов
+After=network-online.target
+Wants=network-online.target
+PartOf=atsd.target
+
+[Service]
+Type=simple
+User=atsd
+Group=atsd
+WorkingDirectory=/opt/atsd
+Environment=HOME=/opt/atsd
+Environment=ROS_DOMAIN_ID=17
+Environment=RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+Environment=ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+Environment=GPIOZERO_PIN_FACTORY=lgpio
+Environment=ATSD_DATA=/opt/atsd/data
+Environment=RCUTILS_LOGGING_BUFFERED_STREAM=1
+ExecStart=/opt/atsd/run.sh ros2 launch atsd_web web.launch.py
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+KillSignal=SIGINT
+
+[Install]
+WantedBy=atsd.target

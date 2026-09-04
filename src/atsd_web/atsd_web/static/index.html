@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1418">
+<title>АТСД-1М · доставка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="mark"></span>
+    <div>
+      <b>АТСД-1М</b>
+      <small id="roleLabel">внутренняя логистика НТЦ</small>
+    </div>
+  </div>
+  <div class="link" id="linkState"><i></i><span>нет связи</span></div>
+</header>
+
+<main class="grid">
+
+  <!-- ═══ КАРТА ═══ -->
+  <section class="panel map-panel">
+    <div class="panel-head">
+      <h2>Карта</h2>
+      <div class="seg" id="mapSeg">
+        <button data-map="auto" class="on">Авто</button>
+        <button data-map="indoor">Помещение</button>
+        <button data-map="outdoor">Улица</button>
+      </div>
+    </div>
+    <div class="map-wrap">
+      <canvas id="map"></canvas>
+      <div class="map-hint" id="mapHint"></div>
+    </div>
+    <div class="legend">
+      <span><i class="dot rover"></i>ровер</span>
+      <span><i class="dot point"></i>точка</span>
+      <span><i class="dot target"></i>цель</span>
+      <span id="coord" class="mono"></span>
+    </div>
+  </section>
+
+  <!-- ═══ СОСТОЯНИЕ ═══ -->
+  <section class="panel">
+    <div class="panel-head"><h2>Состояние доставки</h2></div>
+
+    <div class="status" id="statusBox">
+      <div class="status-big" id="statusText">Нет активного заказа</div>
+      <div class="route mono" id="routeText"></div>
+    </div>
+
+    <ol class="steps" id="steps">
+      <li data-s="to_pickup"><span></span>Едет за грузом</li>
+      <li data-s="at_pickup"><span></span>Погрузка</li>
+      <li data-s="in_transit"><span></span>В пути</li>
+      <li data-s="at_dropoff"><span></span>Выдача</li>
+      <li data-s="delivered"><span></span>Выдан</li>
+    </ol>
+
+    <div class="eta-row">
+      <div class="eta"><b id="etaPickup">—</b><small>до погрузки</small></div>
+      <div class="eta"><b id="etaDropoff">—</b><small>до выгрузки</small></div>
+    </div>
+
+    <div class="lock" id="lockBox">
+      <i></i><span id="lockText">крышка закрыта</span>
+    </div>
+  </section>
+
+  <!-- ═══ ПИТАНИЕ ═══ -->
+  <section class="panel">
+    <div class="panel-head"><h2>Питание</h2></div>
+    <div class="batt">
+      <div class="batt-row">
+        <div class="batt-name">Привод <small>батарея V5</small></div>
+        <div class="gauge"><span id="bDriveBar"></span></div>
+        <div class="batt-val mono" id="bDriveVal">—</div>
+      </div>
+      <div class="batt-row">
+        <div class="batt-name">Вычислитель <small>X1202, 4×18650</small></div>
+        <div class="gauge"><span id="bCompBar"></span></div>
+        <div class="batt-val mono" id="bCompVal">—</div>
+      </div>
+    </div>
+    <div class="chips">
+      <span class="chip" id="chipSpeed">0,0 м/с</span>
+      <span class="chip" id="chipWhere">помещение</span>
+      <span class="chip warn hidden" id="chipEstop">аварийный стоп</span>
+    </div>
+  </section>
+
+  <!-- ═══ ДЕЙСТВИЯ ═══ -->
+  <section class="panel" id="actionPanel">
+    <div class="panel-head"><h2>Действия</h2></div>
+    <div class="actions">
+      <button class="btn big" id="btnUnlock" disabled>Открыть отсек</button>
+      <button class="btn ghost" id="btnDone" disabled>Готово</button>
+    </div>
+    <p class="hint" id="actionHint">Откройте ссылку отправителя или получателя.</p>
+  </section>
+
+  <!-- ═══ НОВЫЙ ЗАКАЗ ═══ -->
+  <section class="panel admin-only" id="newOrder">
+    <div class="panel-head"><h2>Новый заказ</h2></div>
+    <div class="form">
+      <label>Откуда<select id="selFrom"></select></label>
+      <label>Куда<select id="selTo"></select></label>
+      <button class="btn" id="btnCreate">Отправить робота</button>
+    </div>
+    <div class="links hidden" id="orderLinks">
+      <div class="lk"><small>Ссылка отправителю</small><input readonly id="lkSender"></div>
+      <div class="lk"><small>Ссылка получателю</small><input readonly id="lkReceiver"></div>
+    </div>
+  </section>
+
+  <!-- ═══ ТОЧКИ ═══ -->
+  <section class="panel admin-only" id="pointsPanel">
+    <div class="panel-head">
+      <h2>Точки на карте</h2>
+      <button class="mini" id="btnPlace">Поставить</button>
+    </div>
+    <p class="hint">Нажмите «Поставить», затем ткните в карту — точка встанет туда.</p>
+    <div id="pointList" class="plist"></div>
+    <button class="btn ghost" id="btnSavePoints">Сохранить расстановку</button>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

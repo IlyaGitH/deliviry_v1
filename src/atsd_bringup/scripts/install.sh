@@ -153,8 +153,9 @@ http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
 fi
 
 log "Python-зависимости"
-pip3 install --break-system-packages --upgrade pynmea2 || \
-  warn "pynmea2 не поставился — узел GNSS работать не будет"
+pip3 install --break-system-packages --upgrade \
+     pynmea2 smbus2 fastapi 'uvicorn[standard]' pydantic || \
+  warn 'Часть Python-зависимостей не поставилась — проверьте вручную'
 
 # ─────────────────────────────────────────── 4. пользователь
 if ! id -u "${ATSD_USER}" >/dev/null 2>&1; then
@@ -207,7 +208,9 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
   for f in atsd_drive/lib/atsd_drive/v5_bridge_node \
            atsd_actuators/lib/atsd_actuators/light_node \
            atsd_actuators/lib/atsd_actuators/lock_node \
-           atsd_sensors/lib/atsd_sensors/gnss_node; do
+           atsd_sensors/lib/atsd_sensors/gnss_node \
+           atsd_sensors/lib/atsd_sensors/battery_node \
+           atsd_web/lib/atsd_web/web_node; do
     [[ -f "${WS_DIR}/install/${f}" ]] || die "Не собрался исполняемый: ${f}"
   done
   log "Все узлы собрались"
@@ -247,7 +250,10 @@ EOF
 
 udevadm control --reload-rules && udevadm trigger
 systemctl daemon-reload
-systemctl enable atsd.target atsd-drive atsd-actuators atsd-sensors
+mkdir -p "${ATSD_HOME}/data"
+chown -R "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}/data"
+
+systemctl enable atsd.target atsd-drive atsd-actuators atsd-sensors atsd-web
 
 # ─────────────────────────────────────────── 8. итог
 log "Готово"
@@ -276,6 +282,9 @@ cat <<MSG
 
   4. Запустить всё:
        sudo systemctl start atsd.target
+     Веб-интерфейс: http://<адрес-пи>:8080
+     Проверить без робота:
+       ros2 launch atsd_web web.launch.py mock:=true
        source ${ATSD_HOME}/run.sh
        ros2 topic list
 

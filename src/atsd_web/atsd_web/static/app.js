@@ -1,0 +1,422 @@
+/* ============================================================
+   АТСД-1М · клиент веб-интерфейса
+
+   Роль берётся из ссылки:
+     /?role=sender&order=ID     отправитель
+     /?role=receiver&order=ID   получатель
+     /                          администратор
+
+   Карта рисуется на canvas. Координаты — метры во фрейме map,
+   подложка позиционируется по origin и meters_per_pixel из конфига.
+   Если файла подложки нет, рисуется сетка — интерфейс остаётся
+   рабочим, просто без снимка.
+   ============================================================ */
+
+const qs = new URLSearchParams(location.search);
+const ROLE = qs.get('role') || 'admin';
+const ORDER_ID = qs.get('order') || null;
+
+const $ = (id) => document.getElementById(id);
+const cv = $('map'), ctx = cv.getContext('2d');
+
+let CFG = { points: [], maps: {} };
+let LAST = null;
+let mapMode = 'auto';
+let placing = null;          // id точки, которую ставим кликом
+let localPoints = null;      // черновик расстановки
+const images = {};
+
+/* ─────────────────────────── утилиты */
+function toast(text, err = false) {
+  const t = $('toast');
+  t.textContent = text;
+  t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => (t.className = 'toast'), 2600);
+}
+
+function fmtEta(sec) {
+  if (sec === null || sec === undefined) return '—';
+  if (sec < 60) return sec + ' с';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + ' мин ' + (s < 10 ? '0' : '') + s + ' с';
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = 'Ошибка ' + r.status;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/* ─────────────────────────── карта */
+function activeMapKey() {
+  if (mapMode !== 'auto') return mapMode;
+  if (!LAST) return 'indoor';
+  return LAST.telemetry.indoor ? 'indoor' : 'outdoor';
+}
+
+function loadImage(key) {
+  const meta = CFG.maps[key];
+  if (!meta || images[key] !== undefined) return;
+  const img = new Image();
+  img.onload = () => { images[key] = img; draw(); };
+  img.onerror = () => { images[key] = null; };
+  images[key] = undefined;
+  img.src = meta.image;
+  images[key] = img;
+}
+
+function fitCanvas() {
+  const r = cv.parentElement.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(r.width * dpr);
+  cv.height = Math.round(r.height * dpr);
+  cv.style.width = r.width + 'px';
+  cv.style.height = r.height + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+/* Мир в метрах -> экран. Держим все точки и ровера в кадре. */
+function view() {
+  const pts = (localPoints || CFG.points);
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  if (LAST) { xs.push(LAST.telemetry.pose.x); ys.push(LAST.telemetry.pose.y); }
+  if (!xs.length) { xs.push(0); ys.push(0); }
+
+  const pad = 6;
+  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
+  const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+
+  const w = cv.clientWidth, h = cv.clientHeight;
+  const s = Math.min(w / (maxX - minX), h / (maxY - minY));
+  return {
+    s,
+    ox: (w - (maxX - minX) * s) / 2 - minX * s,
+    oy: h - ((h - (maxY - minY) * s) / 2 - minY * s),
+  };
+}
+
+const toScreen = (v, x, y) => [v.ox + x * v.s, v.oy - y * v.s];
+const toWorld = (v, px, py) => [(px - v.ox) / v.s, (v.oy - py) / v.s];
+
+function draw() {
+  if (!cv.clientWidth) return;
+  const v = view();
+  const w = cv.clientWidth, h = cv.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  const key = activeMapKey();
+  const meta = CFG.maps[key];
+  const img = images[key];
+
+  if (img && img.complete && img.naturalWidth) {
+    const mpp = meta.meters_per_pixel;
+    const [ox, oy] = meta.origin;
+    const wm = img.naturalWidth * mpp, hm = img.naturalHeight * mpp;
+    const [sx, sy] = toScreen(v, ox, oy + hm);
+    ctx.globalAlpha = 0.85;
+    ctx.drawImage(img, sx, sy, wm * v.s, hm * v.s);
+    ctx.globalAlpha = 1;
+  } else {
+    ctx.strokeStyle = '#1b262e';
+    ctx.lineWidth = 1;
+    const step = 5;
+    for (let x = -100; x <= 200; x += step) {
+      const [px] = toScreen(v, x, 0);
+      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
+    }
+    for (let y = -100; y <= 200; y += step) {
+      const [, py] = toScreen(v, 0, y);
+      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
+    }
+  }
+
+  const pts = localPoints || CFG.points;
+  const targetId = LAST && LAST.order ? LAST.order.target : null;
+
+  // линия до цели
+  if (LAST && targetId) {
+    const t = pts.find(p => p.id === targetId);
+    if (t) {
+      const [ax, ay] = toScreen(v, LAST.telemetry.pose.x, LAST.telemetry.pose.y);
+      const [bx, by] = toScreen(v, t.x, t.y);
+      ctx.strokeStyle = 'rgba(75,157,255,.55)';
+      ctx.lineWidth = 2; ctx.setLineDash([7, 6]);
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // точки
+  pts.forEach(p => {
+    const [x, y] = toScreen(v, p.x, p.y);
+    const isTarget = p.id === targetId;
+    ctx.fillStyle = isTarget ? '#4b9dff' : '#7e8ea0';
+    ctx.beginPath(); ctx.arc(x, y, isTarget ? 9 : 7, 0, 7); ctx.fill();
+    ctx.fillStyle = '#0d1418';
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e8eef2';
+    ctx.font = '600 12px IBM Plex Sans, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(p.name, x, y - 14);
+  });
+
+  // ровер
+  if (LAST) {
+    const { x: rx, y: ry, yaw } = LAST.telemetry.pose;
+    const [x, y] = toScreen(v, rx, ry);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-yaw);
+    ctx.fillStyle = '#37c8a4';
+    ctx.beginPath();
+    ctx.moveTo(15, 0); ctx.lineTo(-9, 9); ctx.lineTo(-4, 0); ctx.lineTo(-9, -9);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(55,200,164,.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 17, 0, 7); ctx.stroke();
+  }
+
+  $('mapHint').textContent =
+    (meta ? meta.label : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м');
+}
+
+/* ─────────────────────────── отрисовка данных */
+function render(msg) {
+  LAST = msg;
+  const t = msg.telemetry, o = msg.order;
+
+  if (msg.points && !localPoints) CFG.points = msg.points;
+
+  $('linkState').className = 'link' + (t.connected ? ' ok' : '');
+  $('linkState').querySelector('span').textContent = t.connected ? 'на связи' : 'нет связи';
+
+  // статус
+  $('statusText').textContent = o ? o.status_ru : 'Нет активного заказа';
+  $('routeText').textContent = o ? `${o.from_name} → ${o.to_name}` : '';
+
+  const seq = ['to_pickup', 'at_pickup', 'in_transit', 'at_dropoff', 'delivered'];
+  const cur = o ? seq.indexOf(o.status) : -1;
+  document.querySelectorAll('.steps li').forEach(li => {
+    const i = seq.indexOf(li.dataset.s);
+    li.className = i < cur ? 'done' : (i === cur ? 'now' : '');
+  });
+
+  $('etaPickup').textContent = o ? fmtEta(o.eta_pickup) : '—';
+  $('etaDropoff').textContent = o ? fmtEta(o.eta_dropoff) : '—';
+
+  // крышка
+  const lb = $('lockBox');
+  if (t.lock.busy) {
+    lb.className = 'lock busy';
+    $('lockText').textContent = 'замок срабатывает';
+  } else if (!t.lock.closed) {
+    lb.className = 'lock open';
+    $('lockText').textContent = 'крышка открыта';
+  } else {
+    lb.className = 'lock';
+    $('lockText').textContent = 'крышка закрыта';
+  }
+
+  // питание
+  setGauge('bDrive', t.battery.drive);
+  setGauge('bComp', t.battery.compute);
+
+  $('chipSpeed').textContent = t.speed.toFixed(1).replace('.', ',') + ' м/с';
+  $('chipWhere').textContent = t.indoor ? 'помещение' : 'улица';
+  $('chipEstop').classList.toggle('hidden', !t.estop);
+  $('coord').textContent =
+    `x ${t.pose.x.toFixed(1)}  y ${t.pose.y.toFixed(1)}`.replace(/\./g, ',');
+
+  updateActions(o);
+  draw();
+}
+
+function setGauge(prefix, b) {
+  const bar = $(prefix + 'Bar'), val = $(prefix + 'Val');
+  if (!b || b.percent === null || b.percent === undefined) {
+    bar.style.width = '0%'; val.textContent = 'нет данных'; return;
+  }
+  const p = Math.max(0, Math.min(100, b.percent));
+  bar.style.width = p + '%';
+  bar.className = p < 20 ? 'low' : (p < 40 ? 'mid' : '');
+  val.textContent = Math.round(p) + ' %' + (b.volts ? '  ·  ' + b.volts + ' В' : '');
+}
+
+/* ─────────────────────────── действия ролей */
+function updateActions(o) {
+  const bu = $('btnUnlock'), bd = $('btnDone'), hint = $('actionHint');
+
+  if (ROLE === 'admin') {
+    $('actionPanel').classList.add('hidden');
+    return;
+  }
+  $('actionPanel').classList.remove('hidden');
+
+  if (!o || (ORDER_ID && o.id !== ORDER_ID)) {
+    bu.disabled = bd.disabled = true;
+    hint.textContent = 'Заказ не активен.';
+    return;
+  }
+
+  const mine = (ROLE === 'sender' && o.status === 'at_pickup') ||
+               (ROLE === 'receiver' && o.status === 'at_dropoff');
+
+  bu.disabled = !mine;
+  bd.disabled = !mine;
+  bd.textContent = ROLE === 'sender' ? 'Готово, груз внутри' : 'Готово, груз забрал';
+
+  if (mine) {
+    hint.textContent = ROLE === 'sender'
+      ? 'Откройте отсек, положите груз и нажмите «Готово». Открыть можно повторно.'
+      : 'Откройте отсек, заберите груз и нажмите «Готово».';
+  } else if (o.status === 'in_transit') {
+    hint.textContent = 'Робот в пути. Отсек заблокирован.';
+  } else {
+    hint.textContent = 'Дождитесь прибытия робота.';
+  }
+}
+
+$('btnUnlock').onclick = async () => {
+  try {
+    const o = LAST && LAST.order;
+    await api(`/api/orders/${o.id}/unlock?role=${ROLE}`, { method: 'POST' });
+    toast('Отсек открыт');
+  } catch (e) { toast(e.message, true); }
+};
+
+$('btnDone').onclick = async () => {
+  try {
+    const o = LAST && LAST.order;
+    await api(`/api/orders/${o.id}/done?role=${ROLE}`, { method: 'POST' });
+    toast(ROLE === 'sender' ? 'Робот отправлен' : 'Доставка завершена');
+  } catch (e) { toast(e.message, true); }
+};
+
+/* ─────────────────────────── админ */
+function fillSelects() {
+  ['selFrom', 'selTo'].forEach(id => {
+    const s = $(id);
+    s.innerHTML = '';
+    CFG.points.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id; opt.textContent = p.name;
+      s.appendChild(opt);
+    });
+  });
+  if (CFG.points.length > 1) $('selTo').selectedIndex = 1;
+}
+
+function renderPointList() {
+  const box = $('pointList');
+  box.innerHTML = '';
+  (localPoints || CFG.points).forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'prow' + (placing === p.id ? ' sel' : '');
+    row.innerHTML = `<b>${p.name}</b><span>${p.x.toFixed(1)} ; ${p.y.toFixed(1)}</span>`;
+    row.onclick = () => {
+      placing = placing === p.id ? null : p.id;
+      $('btnPlace').classList.toggle('on', !!placing);
+      renderPointList();
+      toast(placing ? `Ткните в карту: ${p.name}` : 'Расстановка выключена');
+    };
+    box.appendChild(row);
+  });
+}
+
+$('btnPlace').onclick = () => {
+  if (!localPoints) localPoints = JSON.parse(JSON.stringify(CFG.points));
+  placing = placing ? null : (localPoints[0] && localPoints[0].id);
+  $('btnPlace').classList.toggle('on', !!placing);
+  renderPointList();
+  toast(placing ? 'Выберите точку в списке и ткните в карту' : 'Расстановка выключена');
+};
+
+cv.addEventListener('pointerdown', (ev) => {
+  if (!placing || !localPoints) return;
+  const r = cv.getBoundingClientRect();
+  const v = view();
+  const [wx, wy] = toWorld(v, ev.clientX - r.left, ev.clientY - r.top);
+  const p = localPoints.find(q => q.id === placing);
+  if (p) { p.x = Math.round(wx * 10) / 10; p.y = Math.round(wy * 10) / 10; }
+  renderPointList();
+  draw();
+});
+
+$('btnSavePoints').onclick = async () => {
+  if (!localPoints) { toast('Ничего не менялось'); return; }
+  try {
+    await api('/api/points', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ points: localPoints }),
+    });
+    CFG.points = localPoints; localPoints = null; placing = null;
+    $('btnPlace').classList.remove('on');
+    renderPointList(); fillSelects();
+    toast('Расстановка сохранена');
+  } catch (e) { toast(e.message, true); }
+};
+
+$('btnCreate').onclick = async () => {
+  try {
+    const o = await api('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from_id: $('selFrom').value, to_id: $('selTo').value }),
+    });
+    const base = location.origin;
+    $('lkSender').value = `${base}/?role=sender&order=${o.id}&t=${o.sender_token}`;
+    $('lkReceiver').value = `${base}/?role=receiver&order=${o.id}&t=${o.receiver_token}`;
+    $('orderLinks').classList.remove('hidden');
+    toast('Заказ создан, робот выехал');
+  } catch (e) { toast(e.message, true); }
+};
+
+document.querySelectorAll('#mapSeg button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#mapSeg button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    mapMode = b.dataset.map;
+    loadImage(activeMapKey());
+    draw();
+  };
+});
+
+document.querySelectorAll('.lk input').forEach(i => {
+  i.onclick = () => { i.select(); document.execCommand('copy'); toast('Ссылка скопирована'); };
+});
+
+/* ─────────────────────────── связь */
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock = new WebSocket(`${proto}://${location.host}/ws`);
+  sock.onmessage = (e) => render(JSON.parse(e.data));
+  sock.onclose = () => {
+    $('linkState').className = 'link';
+    $('linkState').querySelector('span').textContent = 'переподключение';
+    setTimeout(connect, 1500);
+  };
+}
+
+async function boot() {
+  if (ROLE !== 'admin') {
+    document.querySelectorAll('.admin-only').forEach(e => e.classList.add('hidden'));
+    $('roleLabel').textContent =
+      ROLE === 'sender' ? 'вы отправитель' : 'вы получатель';
+  }
+  CFG = await api('/api/config');
+  fillSelects();
+  renderPointList();
+  loadImage('indoor'); loadImage('outdoor');
+  fitCanvas(); draw();
+  connect();
+}
+
+window.addEventListener('resize', () => { fitCanvas(); draw(); });
+boot();
