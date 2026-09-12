@@ -167,7 +167,12 @@ class LidarNode(Node):
                     continue
 
             try:
-                chunk = self.ser.read(256)
+                # Читаем всё, что накопилось: на 230400 бод
+                # через USB данные идут пачками, и чтение
+                # фиксированными 256 байтами не успевает —
+                # буфер ядра переполняется, обороты теряются.
+                waiting = self.ser.in_waiting
+                chunk = self.ser.read(min(waiting, 8192) if waiting else 1)
             except (serial.SerialException, OSError) as e:
                 self.get_logger().error(f'Порт отвалился: {e}')
                 try:
@@ -181,7 +186,7 @@ class LidarNode(Node):
                 continue
 
             buf.extend(chunk)
-            if len(buf) > 8192:               # защита от мусора на линии
+            if len(buf) > 65536:               # защита от мусора на линии
                 del buf[:-2048]
 
             while len(buf) >= PKT_LEN:
@@ -313,7 +318,7 @@ class LidarNode(Node):
             # штатные 10 Гц развёртки = 600 об/мин; поле speed в град/с
             st.level = DiagnosticStatus.WARN
             st.message = f'Нештатные обороты: {self.rpm:.0f} об/мин'
-        elif self.crc_errors > 50:
+        elif self.crc_errors > 2000:
             st.level = DiagnosticStatus.WARN
             st.message = 'Много битых кадров, проверьте шлейф и землю'
         else:

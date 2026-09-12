@@ -21,11 +21,13 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="2888", ATTRS{idProduct}=="0501", ATTRS{bInte
 # ------------------------------------------------------------
 
 # Лидар LDROBOT D500 (LD19): GPIO14/15, пины 8 и 10, 230400 бод.
-KERNEL=="ttyAMA0", SYMLINK+="lidar", MODE="0666"
+# Лидар D500 через USB-переходник. ID проверить по lsusb.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="lidar", MODE="0666"
 
 # GNSS BN-880: GPIO4 (TX, пин 7) и GPIO5 (RX, пин 29).
 # Требует dtoverlay=uart2 в /boot/firmware/config.txt.
-KERNEL=="ttyAMA2", SYMLINK+="gnss", MODE="0666"
+KERNEL=="ttyAMA0", SYMLINK+="gnss", MODE="0666"
 
 # Запасной вариант: BN-880 через USB-TTL на CP2102 или CH340.
 # Раскомментировать, если второй UART занять не вышло.
