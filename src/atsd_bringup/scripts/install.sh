@@ -175,14 +175,22 @@ log "Настраиваю config.txt"
 CONFIG=/boot/firmware/config.txt
 if [[ -f ${CONFIG} ]]; then
   add_cfg() { grep -qxF "$1" "${CONFIG}" || echo "$1" >> "${CONFIG}"; }
-  add_cfg 'enable_uart=1'             # UART под BN-880
-  add_cfg 'dtoverlay=disable-bt'      # освобождает ttyAMA0 от Bluetooth
+  add_cfg 'enable_uart=1'             # ttyAMA0 на GPIO14/15 — лидар LD19
+  add_cfg 'dtoverlay=disable-bt'      # на Pi 5 не обязательно, но не мешает
+  add_cfg 'dtoverlay=uart2'           # ttyAMA2 на GPIO4/5 — GNSS BN-880
   add_cfg 'dtparam=i2c_arm=on'        # гейдж X1202 и аудиоплеер
   add_cfg 'usb_max_current_enable=1'  # снимает лимит 600 мА на USB
 else
   warn "${CONFIG} не найден — правьте вручную"
 fi
-systemctl disable --now serial-getty@ttyAMA0.service 2>/dev/null || true
+# Консоль на последовательном порту съедает поток лидара: 230400 бод
+# уходят в getty, а узел видит пустой порт.
+for tty in ttyAMA0 ttyAMA2 serial0; do
+  systemctl disable --now "serial-getty@${tty}.service" 2>/dev/null || true
+done
+if [[ -f /boot/firmware/cmdline.txt ]] && grep -q 'console=serial0' /boot/firmware/cmdline.txt; then
+  warn "В cmdline.txt осталась console=serial0 — уберите, иначе лидар молчит"
+fi
 
 # ─────────────────────────────────────────── 6. сборка
 log "Копирую исходники в ${WS_DIR}"
@@ -208,6 +216,7 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
   for f in atsd_drive/lib/atsd_drive/v5_bridge_node \
            atsd_actuators/lib/atsd_actuators/light_node \
            atsd_actuators/lib/atsd_actuators/lock_node \
+           atsd_sensors/lib/atsd_sensors/lidar_node \
            atsd_sensors/lib/atsd_sensors/gnss_node \
            atsd_sensors/lib/atsd_sensors/battery_node \
            atsd_web/lib/atsd_web/web_node; do
@@ -272,26 +281,31 @@ cat <<MSG
        [light_node] Свет: фары GPIO18, лента GPIO13, потолки 0.60 / 0.50
        [lock_node]  Замок: GPIO19, импульс 0.4 с
 
-  3. Подключить брейн, лидар и GPS, узнать их ID:
+  3. Подключить брейн и проверить устройства:
        lsusb
        udevadm info -a -n /dev/ttyACM1 | grep -E 'idVendor|idProduct|bInterfaceNumber' | head
-     Подставить в /etc/udev/rules.d/99-atsd.rules вместо заглушек,
-     затем:
+     Подставить ID брейна в /etc/udev/rules.d/99-atsd.rules, затем:
        sudo udevadm control --reload-rules && sudo udevadm trigger
-       ls -la /dev/v5 /dev/ydlidar /dev/gnss
+       ls -la /dev/v5 /dev/lidar /dev/gnss
+     Лидар и GNSS сидят на аппаратных UART, их симлинки уже готовы:
+       /dev/lidar -> ttyAMA0 (GPIO15, пин 10, 230400)
+       /dev/gnss  -> ttyAMA2 (GPIO4/5, пины 7 и 29)
 
-  4. Запустить всё:
+  4. Проверить сенсоры по отдельности:
+       source ${ATSD_HOME}/run.sh
+       ros2 run atsd_sensors lidar_node --ros-args -p port:=/dev/lidar
+       ros2 topic hz /scan          # ждём около 10 Гц
+       ros2 run atsd_sensors gnss_node --ros-args -p port:=/dev/gnss
+       ros2 topic echo /gnss/status # sats=... hdop=...
+
+  5. Запустить всё:
        sudo systemctl start atsd.target
      Веб-интерфейс: http://<адрес-пи>:8080
      Проверить без робота:
        ros2 launch atsd_web web.launch.py mock:=true
-       source ${ATSD_HOME}/run.sh
        ros2 topic list
 
-Лидар YDLIDAR ставится отдельно, его нет в apt:
-   git clone https://github.com/YDLIDAR/YDLidar-SDK
-   cd YDLidar-SDK && mkdir build && cd build && cmake .. && make && sudo make install
-   cd ${WS_DIR}/src && sudo -u ${ATSD_USER} git clone https://github.com/YDLIDAR/ydlidar_ros2_driver
-   cd ${WS_DIR} && sudo -u ${ATSD_USER} bash -lc 'source /opt/ros/jazzy/setup.bash && colcon build --symlink-install'
+Сторонние драйверы лидара не нужны: узел atsd_sensors/lidar_node
+разбирает протокол LD19 сам.
 
 MSG

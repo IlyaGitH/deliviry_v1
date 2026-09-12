@@ -53,11 +53,17 @@ lock_node:
 
 gnss_node:
   ros__parameters:
-    port: /dev/gnss
-    baud: 9600                   # BN-880 из коробки; после настройки 115200
+    port: /dev/gnss              # ttyAMA2, GPIO4/5 — см. udev и config.txt
+    baud: 115200                 # целевая; из коробки модуль на 9600,
+                                 # узел сам найдёт его перебором и переключит
     frame_id: gnss_link
-    publish_rate_hz: 5.0
     min_satellites: 4
+
+    configure_module: true       # UBX-настройка при старте
+    nav_rate_hz: 5.0             # решений в секунду вместо заводской одной
+    save_config: true            # сохранить в батарейное ОЗУ модуля
+    fix_timeout_s: 3.0           # молчит дольше — публикуем NO_FIX
+    uere_m: 2.5                  # горизонтальная ошибка на единицу HDOP
 
 battery_node:
   ros__parameters:
@@ -82,29 +88,24 @@ v4l2_camera:
     camera_frame_id: camera_link
     time_per_frame: [1, 30]
 
-# ── Драйвер лидара YDLIDAR X2L ──
-# Ключевой параметр — isSingleChannel. Без него драйвер
-# валится на чтении информации об устройстве.
-ydlidar_ros2_driver_node:
+# ── Лидар LDROBOT D500 Kit (LD19), свой узел atsd_sensors ──
+# Подключён к аппаратному UART: лидар только передаёт, 230400 бод.
+# Скорость менять нельзя, она зашита в прошивку дальномера.
+lidar_node:
   ros__parameters:
-    port: /dev/ydlidar
+    port: /dev/lidar             # ttyAMA0, GPIO15 (пин 10)
+    baud: 230400
     frame_id: laser_frame
-    ignore_array: ""
-    baudrate: 115200
-    lidar_type: 1
-    device_type: 0
-    sample_rate: 3
-    abnormal_check_count: 4
-    fixed_resolution: true
-    reversion: false
-    inverted: true
-    auto_reconnect: true
-    isSingleChannel: true
-    intensity: false
-    support_motor_dtr: true
-    angle_max: 180.0
-    angle_min: -180.0
-    range_max: 8.0
-    range_min: 0.10
-    frequency: 7.0
-    invalid_range_is_inf: false
+    topic: scan
+
+    bins: 455                    # точек в кадре: 4500 отсчётов/с при 10 Гц
+    range_min: 0.05
+    range_max: 12.0
+    min_intensity: 0             # поднять, если ловит засветку от солнца
+    invert: true                 # развёртка по часовой -> против, как в ROS
+    angle_offset_deg: 0.0        # ставить, если корпус лидара повёрнут
+
+    check_crc: true
+    # Сектор, который закрывает грузовой отсек. Пары градусов,
+    # [0.0, 0.0] — ничего не режем. Корма примерно [150.0, -150.0].
+    crop_deg: [0.0, 0.0]

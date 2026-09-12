@@ -16,11 +16,14 @@ Nav2, детектор дорожных знаков, веб-приложени�
 |---|---|
 | `atsd_drive` | Мост с VEX V5 Brain по USB-serial: одометрия, TF, телеметрия, приём `cmd_vel` |
 | `atsd_actuators` | Фары и лента на ШИМ-каналах, соленоидный замок грузового отсека |
-| `atsd_sensors` | Драйвер GNSS BN-880 с разбором NMEA |
+| `atsd_sensors` | Свой драйвер лидара LDROBOT D500 (LD19), GNSS BN-880 с разбором NMEA и настройкой по UBX, гейдж питания |
 | `atsd_bringup` | Launch-файлы, общий конфиг, systemd-сервисы, udev-правила, установщик |
 
-Лидар и камера работают штатными драйверами `ydlidar_ros2_driver`
-и `v4l2_camera` — своё писать незачем, параметры вынесены в общий конфиг.
+Камера работает штатным `v4l2_camera`. Лидар — свой узел: D500 это
+семейство LD19, драйвер YDLIDAR его не видит вовсе, а официальный
+`ldlidar_stl_ros2` пришлось бы собирать из исходников прямо на Pi.
+Протокол LD19 открытый и укладывается в один файл. Все параметры
+вынесены в общий конфиг.
 
 ---
 
@@ -39,10 +42,11 @@ Namespace нет, топики плоские: так их без прослое
 | `/power/computer` | `sensor_msgs/BatteryState` | 1 Гц | Аккумулятор вычислителя, гейдж X1202 |
 | `/drive/estop` | `std_msgs/Bool` | 50 Гц | Аварийная кнопка нажата |
 | `/drive/link` | `std_msgs/Bool` | 50 Гц | Связь с брейном жива |
-| `/scan` | `sensor_msgs/LaserScan` | 7 Гц | Лидар YDLIDAR X2L |
+| `/scan` | `sensor_msgs/LaserScan` | 10 Гц | Лидар LDROBOT D500 (LD19), 455 точек |
 | `/camera/image_raw` | `sensor_msgs/Image` | 30 Гц | Камера, MJPEG |
 | `/gnss/fix` | `sensor_msgs/NavSatFix` | 5 Гц | Координаты |
-| `/gnss/status` | `std_msgs/String` | 5 Гц | Спутники, HDOP, качество |
+| `/gnss/vel` | `geometry_msgs/TwistWithCovarianceStamped` | 5 Гц | Скорость в ENU из RMC |
+| `/gnss/status` | `std_msgs/String` | 5 Гц | Спутники, HDOP, качество, тип решения |
 | `/lights/state` | `std_msgs/String` | 1 Гц | Состояние света |
 | `/lock/busy` | `std_msgs/Bool` | 5 Гц | Соленоид под током |
 | `/lock/closed` | `std_msgs/Bool` | 5 Гц | Крышка закрыта |
@@ -90,7 +94,8 @@ sudo reboot
 
 Скрипт ставит ROS 2 Jazzy, создаёт системного пользователя `atsd`,
 собирает workspace в `/opt/atsd/ws`, прописывает сервисы и udev-правила,
-освобождает аппаратный UART под GNSS и снимает лимит 600 мА на USB.
+поднимает два аппаратных UART — под лидар и под GNSS — и снимает
+лимит 600 мА на USB.
 Идемпотентен — повторный запуск безопасен.
 
 **Флаги:**
@@ -119,19 +124,31 @@ sudo bash install.sh --ros-key=/home/пользователь/ros.key
 
 Сам `packages.ros.org` при этом обычно доступен напрямую.
 
-### Лидар ставится отдельно
+### Лидар и GNSS на аппаратных UART
 
-Драйвера YDLIDAR нет в apt:
+Оба устройства висят не на USB, а на колодке Raspberry. Одного UART
+на двоих не хватает: `install.sh` поднимает второй.
+
+| Устройство | Порт | Пины | Скорость |
+|---|---|---|---|
+| Лидар D500 | `/dev/lidar` → `ttyAMA0` | TX лидара → пин 10 (GPIO15), 5 В → пин 4, GND → пин 6, PWM → пин 9 | 230400 |
+| GNSS BN-880 | `/dev/gnss` → `ttyAMA2` | TX → пин 7 (GPIO4), RX → пин 29 (GPIO5) | 9600 → 115200 |
+
+В `/boot/firmware/config.txt` должны быть строки `enable_uart=1`
+и `dtoverlay=uart2`, а в `cmdline.txt` не должно остаться
+`console=serial0` — иначе getty съедает поток лидара, и узел видит
+пустой порт.
+
+Стороннего SDK не нужно, лидар работает сразу после сборки workspace:
 
 ```bash
-git clone https://github.com/YDLIDAR/YDLidar-SDK
-cd YDLidar-SDK && mkdir build && cd build && cmake .. && make && sudo make install
-cd /opt/atsd/ws/src && sudo -u atsd git clone https://github.com/YDLIDAR/ydlidar_ros2_driver
-cd /opt/atsd/ws && sudo -u atsd bash -lc 'source /opt/ros/jazzy/setup.bash && colcon build --symlink-install'
+ros2 run atsd_sensors lidar_node --ros-args -p port:=/dev/lidar
+ros2 topic hz /scan
 ```
 
-Ключевой параметр в конфиге — `isSingleChannel: true`. Без него драйвер
-валится на чтении информации об устройстве: X2L однoканальный.
+Если развёртка идёт, но препятствия зеркальны по горизонтали —
+поменяйте `invert` в конфиге. Сектор, который закрывает грузовой
+отсек, режется параметром `crop_deg`.
 
 ---
 
@@ -164,7 +181,7 @@ udevadm info -a -n /dev/ttyACM1 | grep -E 'idVendor|idProduct|bInterfaceNumber' 
 
 ```bash
 sudo udevadm control --reload-rules && sudo udevadm trigger
-ls -la /dev/v5 /dev/ydlidar /dev/gnss
+ls -la /dev/v5 /dev/lidar /dev/gnss
 ```
 
 **Запуск всего:**

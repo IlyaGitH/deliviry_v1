@@ -1,4 +1,4 @@
-"""Лидар, камера, GNSS плюс статические трансформы."""
+"""Лидар LD19, камера, GNSS, гейдж питания плюс статические трансформы."""
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -19,8 +19,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_camera', default_value='true'),
         DeclareLaunchArgument('use_gnss',   default_value='true'),
 
-        Node(package='ydlidar_ros2_driver', executable='ydlidar_ros2_driver_node',
-             name='ydlidar_ros2_driver_node', parameters=[cfg],
+        Node(package='atsd_sensors', executable='lidar_node',
+             name='lidar_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=3.0,
              condition=IfCondition(use_lidar)),
 
