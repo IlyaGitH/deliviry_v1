@@ -1,35 +1,7 @@
-# ============================================================
-#  АТСД-1М · стабильные имена устройств
-#  Без этого ttyACM0/ttyACM1/ttyUSB0 меняются местами
-#  после перезагрузки, и узлы стартуют не с тем железом.
-#
-#  Установка:
-#    sudo cp 99-atsd.rules /etc/udev/rules.d/
-#    sudo udevadm control --reload-rules && sudo udevadm trigger
-#
-#  ID берутся из вывода lsusb. Подставьте свои!
-# ============================================================
-
-# VEX V5 Brain: пользовательский порт — старший из двух ACM.
-# Проверить: udevadm info -a -n /dev/ttyACM1 | grep -E 'idVendor|idProduct|interface'
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2888", ATTRS{idProduct}=="0501", ATTRS{bInterfaceNumber}=="02", SYMLINK+="v5", MODE="0666"
-
-# ------------------------------------------------------------
-#  Два аппаратных UART Raspberry Pi 5, оба не USB.
-#  Раньше и лидар, и GNSS указывали на ttyAMA0 — стартовал
-#  тот узел, который успевал первым, второй падал на «порт занят».
-# ------------------------------------------------------------
-
-# Лидар LDROBOT D500 (LD19): GPIO14/15, пины 8 и 10, 230400 бод.
-# Лидар D500 через USB-переходник. ID проверить по lsusb.
+# АТСД-1М: /dev/v5, /dev/lidar, /dev/gnss, /dev/camera
+SUBSYSTEM=="tty", ENV{ID_BUS}=="", IMPORT{builtin}="usb_id"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2888", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="v5", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar", MODE="0666"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="lidar", MODE="0666"
-
-# GNSS BN-880: GPIO4 (TX, пин 7) и GPIO5 (RX, пин 29).
-# Требует dtoverlay=uart2 в /boot/firmware/config.txt.
-KERNEL=="ttyAMA0", SYMLINK+="gnss", MODE="0666"
-
-# Запасной вариант: BN-880 через USB-TTL на CP2102 или CH340.
-# Раскомментировать, если второй UART занять не вышло.
-#SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="gnss", MODE="0666"
-#SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="gnss", MODE="0666"
+KERNEL=="ttyAMA0", SYMLINK+="gnss", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="video4linux", ENV{ID_BUS}=="usb", ATTR{index}=="0", SYMLINK+="camera", GROUP="video", MODE="0660"

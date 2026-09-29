@@ -1,40 +1,4 @@
 #!/usr/bin/env python3
-"""
-atsd_sensors · lidar_node
-
-Драйвер лазерного дальномера LDROBOT D500 Kit (семейство LD19)
-напрямую с аппаратного UART Raspberry Pi 5. Без SDK и без сторонних
-ROS-пакетов: протокол LD19 открытый и умещается в один файл.
-
-Публикует:
-    /scan            sensor_msgs/LaserScan     кадр развёртки
-    /diagnostics     diagnostic_msgs/...       обороты, брак CRC, темп
-
-Почему свой узел, а не ydlidar_ros2_driver
-    D500 — это LD19, а не X2L. Протоколы разные, драйвер YDLIDAR его
-    не видит вовсе. Официальный ldlidar_stl_ros2 собирается из
-    исходников, тянет CMake-пакет и лишнюю сборку на Pi перед сдачей.
-    Здесь тот же результат на 200 строках и без зависимостей.
-
-Подключение (ZH1.5T-4P → колодка Pi)
-    P5V  → пин 4  (5 В)
-    GND  → пин 6
-    TX   → пин 10 (GPIO15, RXD0)      лидар только передаёт
-    PWM  → пин 9  (GND)               мотор на максимум оборотов
-    230400 бод, 8N1, порт /dev/lidar → ttyAMA0
-
-Обязательно: в raspi-config консоль на последовательном порту
-выключена, сам порт включён. Иначе getty съедает поток.
-
-Формат кадра, 47 байт
-    0x54 | 0x2C | скорость(2) | старт.угол(2) |
-    12 × { дальность мм (2) + сила сигнала (1) } |
-    кон.угол(2) | метка времени(2) | CRC8(1)
-
-Углы приходят по часовой стрелке, ROS считает против — узел
-разворачивает их сам (параметр invert).
-"""
-
 import math
 import threading
 import time
@@ -51,14 +15,13 @@ from sensor_msgs.msg import LaserScan
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
 
-HEADER = 0x54          # признак начала кадра
-VER_LEN = 0x2C         # версия протокола + 12 точек в кадре
+HEADER = 0x54
+VER_LEN = 0x2C
 POINTS = 12
 PKT_LEN = 47
 
 
 def _crc_table(poly: int = 0x4D):
-    """Таблица CRC8 LDROBOT: полином 0x4D, старшим битом вперёд."""
     table = []
     for i in range(256):
         c = i
@@ -87,15 +50,13 @@ class LidarNode(Node):
         self.declare_parameter('baud', 230400)
         self.declare_parameter('frame_id', 'laser_frame')
         self.declare_parameter('topic', 'scan')
-        self.declare_parameter('bins', 455)            # точек в кадре /scan
+        self.declare_parameter('bins', 455)
         self.declare_parameter('range_min', 0.05)
         self.declare_parameter('range_max', 12.0)
-        self.declare_parameter('min_intensity', 0)     # отсев слабых засветок
-        self.declare_parameter('invert', True)         # по часовой → против
+        self.declare_parameter('min_intensity', 0)
+        self.declare_parameter('invert', True)
         self.declare_parameter('angle_offset_deg', 0.0)
         self.declare_parameter('check_crc', True)
-        # Сектора, которые закрывает сам робот: плоский список пар
-        # градусов в системе ROS, например [150.0, 210.0] — корма.
         self.declare_parameter('crop_deg', [0.0, 0.0])
 
         p = self.get_parameter
@@ -118,7 +79,6 @@ class LidarNode(Node):
                                               qos_profile_sensor_data)
         self.pub_diag = self.create_publisher(DiagnosticArray, '/diagnostics', 5)
 
-        # состояние сборки кадра
         self._pts = []
         self._acc_deg = 0.0
         self._last_start = None
@@ -126,7 +86,6 @@ class LidarNode(Node):
         self._queue = deque(maxlen=4)
         self._lock = threading.Lock()
 
-        # счётчики для диагностики
         self.rpm = 0.0
         self.crc_errors = 0
         self.scans = 0
@@ -138,14 +97,13 @@ class LidarNode(Node):
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
 
-        self.create_timer(0.01, self._drain)      # публикация из основного потока
+        self.create_timer(0.01, self._drain)
         self.create_timer(1.0, self._diag)
 
         self.get_logger().info(
             f'Лидар LD19/D500: {self.port} @ {self.baud}, '
             f'{self.bins} точек в кадре, кадр {self.frame_id}')
 
-    # ───────────────────────────────────────────── поток чтения
     def _open(self) -> bool:
         try:
             self.ser = serial.Serial(self.port, self.baud, timeout=0.2)
@@ -161,16 +119,10 @@ class LidarNode(Node):
         while self._alive:
             if self.ser is None:
                 if not self._open():
-                    # порт может появиться позже — например, лидар
-                    # запитался от отдельной ветки 5 В
                     time.sleep(2.0)
                     continue
 
             try:
-                # Читаем всё, что накопилось: на 230400 бод
-                # через USB данные идут пачками, и чтение
-                # фиксированными 256 байтами не успевает —
-                # буфер ядра переполняется, обороты теряются.
                 waiting = self.ser.in_waiting
                 chunk = self.ser.read(min(waiting, 8192) if waiting else 1)
             except (serial.SerialException, OSError) as e:
@@ -186,7 +138,7 @@ class LidarNode(Node):
                 continue
 
             buf.extend(chunk)
-            if len(buf) > 65536:               # защита от мусора на линии
+            if len(buf) > 65536:
                 del buf[:-2048]
 
             while len(buf) >= PKT_LEN:
@@ -201,9 +153,8 @@ class LidarNode(Node):
                 del buf[:PKT_LEN]
                 self._packet(pkt)
 
-    # ───────────────────────────────────────────── разбор кадра
     def _packet(self, pkt: bytes):
-        speed = int.from_bytes(pkt[2:4], 'little')          # град/с
+        speed = int.from_bytes(pkt[2:4], 'little')
         start = int.from_bytes(pkt[4:6], 'little') / 100.0
         end = int.from_bytes(pkt[42:44], 'little') / 100.0
 
@@ -222,8 +173,6 @@ class LidarNode(Node):
             self._pts.append(((start + step * i) % 360.0,
                               dist_mm / 1000.0, float(intensity)))
 
-        # Оборот считаем по началу пакета, а не по его длине: внутри
-        # кадра лежат 11 шагов из 12, и сумма длин до 360° не дотягивает.
         if self._last_start is not None:
             self._acc_deg += (start - self._last_start) % 360.0
         wrapped = self._last_start is not None and start < self._last_start
@@ -240,8 +189,6 @@ class LidarNode(Node):
         self._acc_deg = 0.0
         self._scan_start = now
 
-        # Мусорный или слишком длинный кадр пропускаем: лучше дырка
-        # в потоке, чем растянутая по времени развёртка в costmap.
         if not (0.03 < scan_time < 0.5) or len(pts) < 40:
             return
 
@@ -260,8 +207,6 @@ class LidarNode(Node):
             idx = int((a + 180.0) / 360.0 * n)
             if idx >= n:
                 idx = n - 1
-            # в один бин попадает несколько отсчётов — берём ближний:
-            # для объезда препятствий безопаснее ошибиться в меньшую
             if dist < ranges[idx]:
                 ranges[idx] = dist
                 intens[idx] = q
@@ -289,12 +234,11 @@ class LidarNode(Node):
             if lo <= hi:
                 if lo <= ang_deg <= hi:
                     return True
-            else:                       # сектор через ±180°
+            else:
                 if ang_deg >= lo or ang_deg <= hi:
                     return True
         return False
 
-    # ───────────────────────────────────────────── публикация
     def _drain(self):
         while True:
             with self._lock:
@@ -303,7 +247,6 @@ class LidarNode(Node):
                 msg = self._queue.popleft()
             self.pub_scan.publish(msg)
 
-    # ───────────────────────────────────────────── диагностика
     def _diag(self):
         silence = (self.get_clock().now() - self.last_pkt).nanoseconds * 1e-9
 
@@ -315,7 +258,6 @@ class LidarNode(Node):
             st.level = DiagnosticStatus.ERROR
             st.message = 'Нет данных с лидара'
         elif not (240.0 <= self.rpm <= 900.0):
-            # штатные 10 Гц развёртки = 600 об/мин; поле speed в град/с
             st.level = DiagnosticStatus.WARN
             st.message = f'Нештатные обороты: {self.rpm:.0f} об/мин'
         elif self.crc_errors > 2000:

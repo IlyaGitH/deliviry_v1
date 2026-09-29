@@ -1,17 +1,3 @@
-/* ============================================================
-   АТСД-1М · клиент веб-интерфейса
-
-   Роль берётся из ссылки:
-     /?role=sender&order=ID     отправитель
-     /?role=receiver&order=ID   получатель
-     /                          администратор
-
-   Карта рисуется на canvas. Координаты — метры во фрейме map,
-   подложка позиционируется по origin и meters_per_pixel из конфига.
-   Если файла подложки нет, рисуется сетка — интерфейс остаётся
-   рабочим, просто без снимка.
-   ============================================================ */
-
 const qs = new URLSearchParams(location.search);
 const ROLE = qs.get('role') || 'admin';
 const ORDER_ID = qs.get('order') || null;
@@ -22,11 +8,64 @@ const cv = $('map'), ctx = cv.getContext('2d');
 let CFG = { points: [], maps: {} };
 let LAST = null;
 let mapMode = 'auto';
-let placing = null;          // id точки, которую ставим кликом
-let localPoints = null;      // черновик расстановки
+let placing = null;
+let localPoints = null;
 const images = {};
 
-/* ─────────────────────────── утилиты */
+const EVENT_RU = {
+  MISSION_START: 'Рейс начат', CARGO_LOADED: 'Груз загружен, выезд', CARGO_UNLOADED: 'Груз выдан',
+  ARRIVED_PICKUP: 'Прибыл на погрузку', ARRIVED_DROP: 'Прибыл на выдачу', DELIVERED: 'Доставка завершена',
+  STOP_SIGN: 'Распознан знак «Стоп»', STOP_SIGN_HOLD: 'Полная остановка у знака «Стоп»',
+  STOP_SIGN_GO: 'Продолжаю движение после «Стоп»', CROSSWALK_SLOW: 'Пешеходный переход — снижаю скорость',
+  BUMP_SLOW: 'Искусственная неровность — снижаю скорость', RED_LIGHT_STOP: 'Красный сигнал — остановка',
+  GREEN_GO: 'Зелёный сигнал — движение', OBSTACLE_STOP: 'Препятствие — остановка',
+  OBSTACLE_CLEAR: 'Путь свободен', DETOUR_START: 'Объезд препятствия', DETOUR_DONE: 'Объезд завершён',
+  BLOCKED_WAITING: 'Проезд перекрыт, ожидание', RECOVERY: 'Нештатная ситуация: отъезд и объезд',
+  STALL: 'Застревание колёс', BUMPER: 'Касание бампера', FAULT: 'Сбой', LINK_LOST: 'Потеряна связь с Pi',
+  LINK_OK: 'Связь с Pi восстановлена', GYRO_FAULT: 'Отказ гироскопа — курс по энкодерам',
+  GYRO_READY: 'Гироскоп откалиброван', NUDGE_ON: 'Оператор подруливает', NUDGE_OFF: 'Подруливание закончено', GYRO_SIGN_FLIPPED: 'Знак гироскопа был перепутан — исправлен автоматически', MOTOR_MISSING: 'Отключился мотор', MOTOR_BACK: 'Мотор снова на связи',
+  MOTOR_HOT: 'Перегрев мотора — снижаю скорость', MOTOR_COOL: 'Моторы остыли', BATT_LOW: 'Низкий заряд привода',
+  ESTOP: 'Аварийный стоп', ESTOP_RELEASE: 'Аварийный стоп снят', MISSION_ABORT: 'Рейс отменён',
+  LOCK_TAMPER: 'Крышку открыли в пути!', REJECT: 'Команда отклонена', RETURNED_BASE: 'Вернулся на базу',
+  DOCK_SEARCH: 'Подъезд к точке, ищу красную разметку', DOCK_SPOT: 'Разметка найдена',
+  DOCK_WAIT: 'Разметка не видна, жду', DOCKED: 'Встал на разметку, координаты уточнены',
+  DOCK_NOT_FOUND: 'Разметка не найдена, стою по счислению', ZONE_OK: 'BLE-метка точки подтверждена',
+  ZONE_MISMATCH: 'Рядом метка другой точки!', ZONE_UNCONFIRMED: 'BLE-метка точки не обнаружена',
+  ZONE_UNCONFIRMED_UNLOCK: 'Отсек открыт без подтверждения BLE-метки',
+};
+const POINT_NAME = (id) => ((CFG.points || []).find(p => p.id === id) || {}).name || id;
+const EVENT_SKIP = new Set(['STATE', 'IGNORED_C', 'IGNORED_U', 'POSE_RESET', 'GYRO_CALIBRATING']);
+const EVENT_WARN = new Set(['FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
+  'MOTOR_HOT', 'BATT_LOW', 'ESTOP', 'LOCK_TAMPER', 'REJECT', 'RECOVERY', 'BLOCKED_WAITING',
+  'DOCK_NOT_FOUND', 'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'ZONE_UNCONFIRMED_UNLOCK', 'GYRO_SIGN_FLIPPED']);
+const EVENT_GOOD = new Set(['ARRIVED_PICKUP', 'ARRIVED_DROP', 'DELIVERED', 'DETOUR_DONE', 'GREEN_GO',
+  'STOP_SIGN_GO', 'CARGO_LOADED', 'CARGO_UNLOADED', 'DOCKED', 'ZONE_OK']);
+let lastEventSeq = 0;
+
+function renderEvents(list) {
+  const box = $('eventLog');
+  (list || []).forEach(e => {
+    if (e.seq <= lastEventSeq) return;
+    lastEventSeq = e.seq;
+    const [code, ...args] = e.text.split(' ');
+    if (EVENT_SKIP.has(code)) return;
+    const li = document.createElement('li');
+    li.className = EVENT_WARN.has(code) ? 'warn' : (EVENT_GOOD.has(code) ? 'good' : '');
+    const t = new Date(e.ts * 1000).toLocaleTimeString('ru-RU', { hour12: false });
+    const text = (EVENT_RU[code] || code) + (args.length ? ' · ' + args.join(' ') : '');
+    li.innerHTML = `<time>${t}</time><span></span>`;
+    li.querySelector('span').textContent = text;
+    box.prepend(li);
+    while (box.children.length > 80) box.removeChild(box.lastChild);
+  });
+}
+
+function fmtTimer(sec) {
+  if (sec === null || sec === undefined) return '00:00.0';
+  const m = Math.floor(sec / 60), s = sec - m * 60;
+  return String(m).padStart(2, '0') + ':' + s.toFixed(1).padStart(4, '0');
+}
+
 function toast(text, err = false) {
   const t = $('toast');
   t.textContent = text;
@@ -52,7 +91,6 @@ async function api(path, opts) {
   return r.json();
 }
 
-/* ─────────────────────────── карта */
 function activeMapKey() {
   if (mapMode !== 'auto') return mapMode;
   if (!LAST) return 'indoor';
@@ -80,7 +118,6 @@ function fitCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-/* Мир в метрах -> экран. Держим все точки и ровера в кадре. */
 function view() {
   const pts = (localPoints || CFG.points);
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
@@ -138,7 +175,6 @@ function draw() {
   const pts = localPoints || CFG.points;
   const targetId = LAST && LAST.order ? LAST.order.target : null;
 
-  // линия до цели
   if (LAST && targetId) {
     const t = pts.find(p => p.id === targetId);
     if (t) {
@@ -151,7 +187,6 @@ function draw() {
     }
   }
 
-  // точки
   pts.forEach(p => {
     const [x, y] = toScreen(v, p.x, p.y);
     const isTarget = p.id === targetId;
@@ -165,7 +200,6 @@ function draw() {
     ctx.fillText(p.name, x, y - 14);
   });
 
-  // ровер
   if (LAST) {
     const { x: rx, y: ry, yaw } = LAST.telemetry.pose;
     const [x, y] = toScreen(v, rx, ry);
@@ -186,17 +220,16 @@ function draw() {
     (meta ? meta.label : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м');
 }
 
-/* ─────────────────────────── отрисовка данных */
 function render(msg) {
   LAST = msg;
   const t = msg.telemetry, o = msg.order;
 
   if (msg.points && !localPoints) CFG.points = msg.points;
 
-  $('linkState').className = 'link' + (t.connected ? ' ok' : '');
-  $('linkState').querySelector('span').textContent = t.connected ? 'на связи' : 'нет связи';
+  const online = t.connected && t.brain_link;
+  $('linkState').className = 'link' + (online ? ' ok' : '');
+  $('linkState').querySelector('span').textContent = online ? 'робот на связи' : 'нет связи с роботом';
 
-  // статус
   $('statusText').textContent = o ? o.status_ru : 'Нет активного заказа';
   $('routeText').textContent = o ? `${o.from_name} → ${o.to_name}` : '';
 
@@ -207,10 +240,23 @@ function render(msg) {
     li.className = i < cur ? 'done' : (i === cur ? 'now' : '');
   });
 
+  $('missionTimer').textContent = fmtTimer(o ? o.mission_s : null);
+  const banner = $('pauseBanner');
+  if (o && o.fault) {
+    banner.className = 'banner fault';
+    banner.textContent = 'Сбой на роботе. Смотрите журнал; администратор может продолжить рейс.';
+  } else if (o && o.pause_ru && o.pause_ru.length) {
+    banner.className = 'banner';
+    banner.textContent = 'Пауза: ' + o.pause_ru.join(', ');
+  } else {
+    banner.className = 'banner hidden';
+  }
+  $('btnResume').disabled = !(o && o.fault);
+  $('btnCancel').disabled = !o;
+
   $('etaPickup').textContent = o ? fmtEta(o.eta_pickup) : '—';
   $('etaDropoff').textContent = o ? fmtEta(o.eta_dropoff) : '—';
 
-  // крышка
   const lb = $('lockBox');
   if (t.lock.busy) {
     lb.className = 'lock busy';
@@ -223,13 +269,21 @@ function render(msg) {
     $('lockText').textContent = 'крышка закрыта';
   }
 
-  // питание
   setGauge('bDrive', t.battery.drive);
   setGauge('bComp', t.battery.compute);
 
   $('chipSpeed').textContent = t.speed.toFixed(1).replace('.', ',') + ' м/с';
   $('chipWhere').textContent = t.indoor ? 'помещение' : 'улица';
   $('chipEstop').classList.toggle('hidden', !t.estop);
+  $('chipTamper').classList.toggle('hidden', !(t.lock && t.lock.tamper));
+  $('chipBrain').classList.toggle('hidden', !!t.brain_link);
+  $('chipObstacle').textContent = t.obstacle || 'коридор свободен';
+  const ble = t.ble || {};
+  $('chipZone').textContent = ble.zone
+    ? `BLE: ${POINT_NAME(ble.zone)} ${ble.rssi} дБм${ble.near ? ' · рядом' : ''}`
+    : 'BLE: меток нет';
+  $('chipZone').classList.toggle('ok', !!ble.near);
+  renderEvents(msg.events);
   $('coord').textContent =
     `x ${t.pose.x.toFixed(1)}  y ${t.pose.y.toFixed(1)}`.replace(/\./g, ',');
 
@@ -248,7 +302,6 @@ function setGauge(prefix, b) {
   val.textContent = Math.round(p) + ' %' + (b.volts ? '  ·  ' + b.volts + ' В' : '');
 }
 
-/* ─────────────────────────── действия ролей */
 function updateActions(o) {
   const bu = $('btnUnlock'), bd = $('btnDone'), hint = $('actionHint');
 
@@ -290,15 +343,26 @@ $('btnUnlock').onclick = async () => {
   } catch (e) { toast(e.message, true); }
 };
 
+$('btnResume').onclick = async () => {
+  try { await api('/api/mission/resume', { method: 'POST' }); toast('Рейс продолжен'); }
+  catch (e) { toast(e.message, true); }
+};
+
+$('btnCancel').onclick = async () => {
+  const o = LAST && LAST.order;
+  if (!o || !confirm('Отменить рейс? Робот остановится.')) return;
+  try { await api(`/api/orders/${o.id}/cancel`, { method: 'POST' }); toast('Рейс отменён'); }
+  catch (e) { toast(e.message, true); }
+};
+
 $('btnDone').onclick = async () => {
   try {
     const o = LAST && LAST.order;
     await api(`/api/orders/${o.id}/done?role=${ROLE}`, { method: 'POST' });
-    toast(ROLE === 'sender' ? 'Робот отправлен' : 'Доставка завершена');
+    toast(ROLE === 'sender' ? 'Команда отправлена роботу' : 'Выдача подтверждена');
   } catch (e) { toast(e.message, true); }
 };
 
-/* ─────────────────────────── админ */
 function fillSelects() {
   ['selFrom', 'selTo'].forEach(id => {
     const s = $(id);
@@ -392,7 +456,6 @@ document.querySelectorAll('.lk input').forEach(i => {
   i.onclick = () => { i.select(); document.execCommand('copy'); toast('Ссылка скопирована'); };
 });
 
-/* ─────────────────────────── связь */
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const sock = new WebSocket(`${proto}://${location.host}/ws`);

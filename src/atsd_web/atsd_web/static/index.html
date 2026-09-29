@@ -25,7 +25,6 @@
 
 <main class="grid">
 
-  <!-- ═══ КАРТА ═══ -->
   <section class="panel map-panel">
     <div class="panel-head">
       <h2>Карта</h2>
@@ -47,13 +46,14 @@
     </div>
   </section>
 
-  <!-- ═══ СОСТОЯНИЕ ═══ -->
   <section class="panel">
     <div class="panel-head"><h2>Состояние доставки</h2></div>
 
     <div class="status" id="statusBox">
       <div class="status-big" id="statusText">Нет активного заказа</div>
       <div class="route mono" id="routeText"></div>
+      <div class="timer mono" id="missionTimer">00:00.0</div>
+      <div class="banner hidden" id="pauseBanner"></div>
     </div>
 
     <ol class="steps" id="steps">
@@ -72,9 +72,21 @@
     <div class="lock" id="lockBox">
       <i></i><span id="lockText">крышка закрыта</span>
     </div>
+
+    <div class="admin-row admin-only">
+      <button class="btn ghost small" id="btnResume" disabled>Продолжить после сбоя</button>
+      <button class="btn ghost small danger" id="btnCancel" disabled>Отменить рейс</button>
+    </div>
   </section>
 
-  <!-- ═══ ПИТАНИЕ ═══ -->
+  <section class="panel" id="logPanel">
+    <div class="panel-head">
+      <h2>Журнал рейса</h2>
+      <span class="chip" id="chipObstacle">коридор свободен</span>
+    </div>
+    <ol class="log" id="eventLog"></ol>
+  </section>
+
   <section class="panel">
     <div class="panel-head"><h2>Питание</h2></div>
     <div class="batt">
@@ -92,11 +104,13 @@
     <div class="chips">
       <span class="chip" id="chipSpeed">0,0 м/с</span>
       <span class="chip" id="chipWhere">помещение</span>
+      <span class="chip" id="chipZone">BLE: меток нет</span>
       <span class="chip warn hidden" id="chipEstop">аварийный стоп</span>
+      <span class="chip warn hidden" id="chipTamper">крышку открыли в пути</span>
+      <span class="chip warn hidden" id="chipBrain">VEX V5 не на связи</span>
     </div>
   </section>
 
-  <!-- ═══ ДЕЙСТВИЯ ═══ -->
   <section class="panel" id="actionPanel">
     <div class="panel-head"><h2>Действия</h2></div>
     <div class="actions">
@@ -106,7 +120,6 @@
     <p class="hint" id="actionHint">Откройте ссылку отправителя или получателя.</p>
   </section>
 
-  <!-- ═══ НОВЫЙ ЗАКАЗ ═══ -->
   <section class="panel admin-only" id="newOrder">
     <div class="panel-head"><h2>Новый заказ</h2></div>
     <div class="form">
@@ -120,7 +133,6 @@
     </div>
   </section>
 
-  <!-- ═══ ТОЧКИ ═══ -->
   <section class="panel admin-only" id="pointsPanel">
     <div class="panel-head">
       <h2>Точки на карте</h2>

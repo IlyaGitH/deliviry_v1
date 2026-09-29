@@ -1,22 +1,4 @@
 #!/usr/bin/env python3
-"""
-atsd_sensors · battery_node
-
-Заряд аккумуляторов вычислителя: плата X1202 несёт гейдж
-на шине I2C по адресу 0x36 (совместим с MAX17040/MAX17048).
-
-Публикует:
-    /power/computer   sensor_msgs/BatteryState
-
-Регистры гейджа:
-    0x02  VCELL — напряжение банки, 12 бит, шаг 1,25 мВ
-    0x04  SOC   — заряд в процентах, старший байт = целые проценты
-
-Батарея привода приходит отдельно, от V5 Brain, — её публикует
-узел моста в /drive/battery. Два контура питания, две батареи,
-два топика.
-"""
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
@@ -25,7 +7,7 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 try:
     from smbus2 import SMBus
     I2C_OK = True
-except Exception:                                   # noqa: BLE001
+except Exception:
     I2C_OK = False
 
 
@@ -50,7 +32,7 @@ class BatteryNode(Node):
         if I2C_OK:
             try:
                 self.bus = SMBus(self.bus_id)
-            except Exception as e:                   # noqa: BLE001
+            except Exception as e:
                 self.get_logger().error(f'Шина I2C {self.bus_id} недоступна: {e}')
         else:
             self.get_logger().warn('Нет smbus2 — узел работает вхолостую. '
@@ -65,7 +47,6 @@ class BatteryNode(Node):
             f'банок {self.cells}')
 
     def read_word_swapped(self, reg):
-        """Гейдж отдаёт слово в обратном порядке байтов."""
         raw = self.bus.read_word_data(self.addr, reg)
         return ((raw & 0xFF) << 8) | (raw >> 8)
 
@@ -81,10 +62,10 @@ class BatteryNode(Node):
             try:
                 vcell = self.read_word_swapped(0x02)
                 soc = self.read_word_swapped(0x04)
-                volts = (vcell >> 4) * 1.25 / 1000.0     # вольт на банку
+                volts = (vcell >> 4) * 1.25 / 1000.0
                 pct = min(max(soc / 256.0, 0.0), 100.0)
                 msg.present = True
-            except Exception as e:                   # noqa: BLE001
+            except Exception as e:
                 self.get_logger().warn(f'Чтение гейджа не удалось: {e}',
                                        throttle_duration_sec=10.0)
                 msg.present = False

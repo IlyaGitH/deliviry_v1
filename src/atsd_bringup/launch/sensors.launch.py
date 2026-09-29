@@ -1,4 +1,3 @@
-"""Лидар LD19, камера, GNSS, гейдж питания плюс статические трансформы."""
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -13,11 +12,13 @@ def generate_launch_description():
     use_lidar  = LaunchConfiguration('use_lidar')
     use_camera = LaunchConfiguration('use_camera')
     use_gnss   = LaunchConfiguration('use_gnss')
+    use_ble    = LaunchConfiguration('use_ble')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_lidar',  default_value='true'),
-        DeclareLaunchArgument('use_camera', default_value='true'),
+        DeclareLaunchArgument('use_camera', default_value='false'),
         DeclareLaunchArgument('use_gnss',   default_value='true'),
+        DeclareLaunchArgument('use_ble',    default_value='true'),
 
         Node(package='atsd_sensors', executable='lidar_node',
              name='lidar_node', parameters=[cfg],
@@ -35,13 +36,16 @@ def generate_launch_description():
              name='battery_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=5.0),
 
+        Node(package='atsd_sensors', executable='ble_node',
+             name='ble_node', parameters=[cfg],
+             output='screen', respawn=True, respawn_delay=5.0,
+             condition=IfCondition(use_ble)),
+
         Node(package='atsd_sensors', executable='gnss_node',
              name='gnss_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=3.0,
              condition=IfCondition(use_gnss)),
 
-        # ── статические трансформы: x y z yaw pitch roll parent child ──
-        # Значения по компоновочному чертежу АТСД-1М, в метрах.
         Node(package='tf2_ros', executable='static_transform_publisher',
              name='tf_base_laser',
              arguments=['0.29', '0.0', '0.22', '0', '0', '0',

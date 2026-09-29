@@ -1,0 +1,23 @@
+[Unit]
+Description=ATSD | Восприятие: препятствия, знаки, светофор
+After=network-online.target atsd-sensors.service
+PartOf=atsd.target
+
+[Service]
+Type=simple
+User=atsd
+Group=atsd
+WorkingDirectory=/opt/atsd
+Environment=HOME=/opt/atsd
+Environment=ROS_DOMAIN_ID=17
+Environment=RCUTILS_LOGGING_BUFFERED_STREAM=1
+Environment=OMP_NUM_THREADS=3
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGINT
+SupplementaryGroups=video dialout
+ExecStart=/opt/atsd/run.sh ros2 launch atsd_bringup perception.launch.py
+
+[Install]
+WantedBy=atsd.target

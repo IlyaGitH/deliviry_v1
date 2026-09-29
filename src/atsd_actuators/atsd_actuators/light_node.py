@@ -1,36 +1,14 @@
 #!/usr/bin/env python3
-"""
-atsd_actuators · light_node
-
-Управление фарами и лентой через полевые ключи на GPIO.
-
-Подписывается:
-    /lights/headlights   std_msgs/Float32   яркость фар 0.0 .. 1.0
-    /lights/strip        std_msgs/Float32   яркость ленты 0.0 .. 1.0
-    /lights/strip_mode   std_msgs/String    off | solid | blink | beacon
-    /lock/busy           std_msgs/Bool      интерлок: замок под током
-
-Публикует:
-    /lights/state        std_msgs/String    текущее состояние, для интерфейса
-
-ТОКОВЫЙ ИНТЕРЛОК
-Шина 12 В тянет около 1,4 А. Замок один берёт 1,1 А, поэтому пока
-он под током, свет принудительно гасится. Иначе просадка уронит
-Raspberry посреди заезда.
-
-ПЛАВНЫЙ ПУСК
-Резкое включение даёт бросок тока через повышающий модуль.
-Яркость меняется рампой за ramp_time, а не скачком.
-"""
-
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32, String, Bool
 
+from atsd_actuators.pins import HEADLIGHT, STRIP, check_pin, check_unique
+
 try:
     from gpiozero import PWMLED
     GPIO_OK = True
-except Exception:                                  # noqa: BLE001
+except Exception:
     GPIO_OK = False
 
 
@@ -38,7 +16,6 @@ MODES = ('off', 'solid', 'blink', 'beacon')
 
 
 class Channel:
-    """Один ШИМ-канал с рампой и ограничением сверху."""
 
     def __init__(self, pin, ceiling, ramp_time, freq, dry_run):
         self.ceiling = ceiling
@@ -73,10 +50,10 @@ class LightNode(Node):
     def __init__(self):
         super().__init__('light_node')
 
-        self.declare_parameter('headlight_pin', 18)
-        self.declare_parameter('strip_pin', 13)
+        self.declare_parameter('headlight_pin', HEADLIGHT)
+        self.declare_parameter('strip_pin', STRIP)
         self.declare_parameter('pwm_freq_hz', 200)
-        self.declare_parameter('headlight_ceiling', 0.6)   # бюджет питания
+        self.declare_parameter('headlight_ceiling', 0.6)
         self.declare_parameter('strip_ceiling', 0.5)
         self.declare_parameter('ramp_time_s', 0.5)
         self.declare_parameter('blink_period_s', 1.0)
@@ -92,13 +69,16 @@ class LightNode(Node):
                 'gpiozero недоступен — узел работает вхолостую. '
                 'Поставьте python3-gpiozero и python3-lgpio.')
 
+        head_pin = check_pin(p('headlight_pin').value, 'фары')
+        strip_pin = check_pin(p('strip_pin').value, 'лента')
+        check_unique({'фары': head_pin, 'лента': strip_pin})
         freq = int(p('pwm_freq_hz').value)
         ramp = float(p('ramp_time_s').value)
 
-        self.head = Channel(int(p('headlight_pin').value),
+        self.head = Channel(head_pin,
                             float(p('headlight_ceiling').value),
                             ramp, freq, self.dry_run)
-        self.strip = Channel(int(p('strip_pin').value),
+        self.strip = Channel(strip_pin,
                              float(p('strip_ceiling').value),
                              ramp, freq, self.dry_run)
 
@@ -127,7 +107,6 @@ class LightNode(Node):
             f'лента GPIO{p("strip_pin").value}, потолки '
             f'{self.head.ceiling:.2f} / {self.strip.ceiling:.2f}')
 
-    # ────────────────────────────────────────── подписки
     def on_head(self, msg: Float32):
         self.head_level = max(0.0, min(msg.data, 1.0))
 
@@ -145,7 +124,6 @@ class LightNode(Node):
     def on_lock(self, msg: Bool):
         self.lock_busy = bool(msg.data)
 
-    # ────────────────────────────────────────── такт
     def tick(self):
         self.phase += self.dt
 
@@ -168,7 +146,6 @@ class LightNode(Node):
             on = (self.phase % self.blink_period) < (self.blink_period * 0.5)
             return self.strip_level if on else 0.0
         if self.mode == 'beacon':
-            # короткая яркая вспышка, как у проблескового маячка
             on = (self.phase % self.beacon_period) < (self.beacon_period * 0.25)
             return self.strip_level if on else 0.0
         return 0.0

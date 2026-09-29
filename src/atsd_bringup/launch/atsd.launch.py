@@ -1,4 +1,3 @@
-"""Полный запуск нижней подсистемы."""
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -13,6 +12,7 @@ def generate_launch_description():
         inc('drive.launch.py'),
         inc('actuators.launch.py'),
         inc('sensors.launch.py'),
+        inc('perception.launch.py'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('atsd_web'),
                          'launch', 'web.launch.py'))),

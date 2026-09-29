@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>atsd_web</name>
-  <version>0.1.0</version>
+  <version>0.3.0</version>
   <description>Веб-интерфейс заказов: карта, телеметрия, управление отсеком</description>
   <maintainer email="dev@atsd.local">ATSD</maintainer>
   <license>MIT</license>

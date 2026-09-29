@@ -1,13 +1,15 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>atsd_bringup</name>
-  <version>0.1.0</version>
-  <description>Запуск всей нижней подсистемы: launch, конфиги, systemd</description>
+  <version>0.3.0</version>
+  <description>Запуск всей бортовой подсистемы: launch, конфиги, systemd, udev</description>
   <maintainer email="dev@atsd.local">ATSD</maintainer>
   <license>MIT</license>
   <exec_depend>atsd_drive</exec_depend>
   <exec_depend>atsd_actuators</exec_depend>
   <exec_depend>atsd_sensors</exec_depend>
+  <exec_depend>atsd_perception</exec_depend>
+  <exec_depend>atsd_web</exec_depend>
   <exec_depend>v4l2_camera</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <export><build_type>ament_python</build_type></export>

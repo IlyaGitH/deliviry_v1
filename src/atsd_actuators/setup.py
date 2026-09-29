@@ -4,7 +4,7 @@ package_name = 'atsd_actuators'
 
 setup(
     name=package_name,
-    version='0.1.0',
+    version='0.3.0',
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -14,12 +14,14 @@ setup(
     zip_safe=True,
     maintainer='ATSD',
     maintainer_email='dev@atsd.local',
-    description='Свет, лента, замок',
+    description='Свет, лента, замок, зуммер, автоматика сигнализации',
     license='MIT',
     entry_points={
         'console_scripts': [
             'light_node = atsd_actuators.light_node:main',
             'lock_node = atsd_actuators.lock_node:main',
+            'buzzer_node = atsd_actuators.buzzer_node:main',
+            'signal_node = atsd_actuators.signal_node:main',
         ],
     },
 )

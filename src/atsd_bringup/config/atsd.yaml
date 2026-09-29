@@ -1,111 +1,185 @@
-# ============================================================
-#  АТСД-1М · параметры нижней подсистемы
-#  Один файл на все узлы. Правится здесь, а не в коде.
-# ============================================================
+# АТСД-1М · параметры всех узлов
+# USB: V5 /dev/v5, лидар /dev/lidar, камера /dev/camera · UART: GNSS /dev/gnss · I2C: X1202 0x36
+# GPIO: 18 фары, 13 лента, 19 замок, 26 зуммер, 27 геркон · 6 и 16 заняты X1202
 
 v5_bridge:
   ros__parameters:
-    port: /dev/v5                # udev-симлинк, см. udev/99-atsd.rules
+    port: /dev/v5
     baud: 115200
-
-    # ── ГЕОМЕТРИЯ ──
-    # Эти три числа определяют всю одометрию.
-    # Подбираются рулеткой, паспортные значения врут на 2-3 %,
-    # а это метр увода на дистанции 50 м.
-    wheel_diameter_mm: 101.6
-    track_mm: 410.0
-    gear_ratio: 1.0
-
+    reconnect_s: 2.0
+    link_timeout_s: 0.5
     cmd_rate_hz: 20.0
-    cmd_timeout_s: 0.5           # дублирует watchdog в прошивке V5
+    cmd_timeout_s: 0.5
+    heartbeat_hz: 10.0
+    obstacle_max_hz: 15.0
+    require_feeds: [obstacle]
+    feed_timeout_s: 1.0
+    odom_source: brain
+    wheel_diameter_mm: 101.6
+    track_mm: 430.0
+    gear_ratio: 1.0
     odom_frame: odom
     base_frame: base_link
     publish_tf: true
-    use_brain_heading: false     # true — курс с гироскопа V5 вместо счисления
+    point_ids: [kpp, admin, testing, depot]   # = узлы 0..3 прошивки
+    use_pose_correction: false
 
 light_node:
   ros__parameters:
-    headlight_pin: 18            # физический пин 12
-    strip_pin: 13                # физический пин 33
+    headlight_pin: 18
+    strip_pin: 13
     pwm_freq_hz: 200
-
-    # ── ТОКОВЫЙ БЮДЖЕТ ──
-    # Шина 12 В тянет около 1,4 А. Потолки не поднимать без
-    # пересчёта: просадка уронит Raspberry посреди заезда.
-    headlight_ceiling: 0.6
+    headlight_ceiling: 0.6   # шина 12 В ~1,4 А
     strip_ceiling: 0.5
-
-    ramp_time_s: 0.5             # плавный пуск, гасит бросок тока
+    ramp_time_s: 0.5
     blink_period_s: 1.0
     beacon_period_s: 0.35
-    dim_on_lock: true            # интерлок с замком
+    dim_on_lock: true
     tick_hz: 50.0
     dry_run: false
 
 lock_node:
   ros__parameters:
-    lock_pin: 19                 # физический пин 35
-    door_sensor_pin: 27          # физический пин 13, геркон
-    use_door_sensor: false       # включить, когда геркон будет установлен
-    pulse_time_s: 0.4            # дольше держать нельзя: ED соленоида 10 %
+    lock_pin: 19
+    door_sensor_pin: 27
+    use_door_sensor: false
+    pulse_time_s: 0.4
     cooldown_s: 3.0
+    block_while_moving: true
+    zone_policy: warn        # off | warn | require — BLE-метка точки для открытия
     dry_run: false
+
+buzzer_node:
+  ros__parameters:
+    buzzer_pin: 26
+    enabled: true
+    max_continuous_s: 2.0
+    dry_run: false
+
+signal_node:
+  ros__parameters:
+    enabled: true
+    tick_hz: 5.0
+    head_moving: 1.0
+    head_drl: 0.3
+    strip_level: 1.0
+    strip_idle: 0.3
+    approach_m: 1.8
+    crosswalk_beep_s: 4.0
+    alarm_s: 6.0
+
+obstacle_node:
+  ros__parameters:
+    scan_topic: scan
+    laser_x: 0.29
+    laser_y: 0.0
+    laser_yaw_deg: 0.0
+    front_x: 0.35            # замерить
+    half_width: 0.25         # замерить
+    margin: 0.10
+    look_ahead: 2.5
+    detour_offset: 0.65
+    min_points: 3
+    default_side: L
+    on_count: 2
+    off_count: 3
+    report_offset: false
+
+vision_node:
+  ros__parameters:
+    device: /dev/camera
+    width: 640
+    height: 480
+    fps: 30
+    model_path: /opt/atsd/models/signs_ncnn_model
+    backend: auto            # ncnn без torch; ultralytics — запасной
+    threads: 3
+    imgsz: 640
+    conf: 0.5
+    infer_hz: 8.0
+    focal_px: 460.0
+    camera_to_front_m: 0.07
+    sign_height_m: 0.30      # замерить
+    light_height_m: 0.30     # замерить
+    class_stop: [stop]
+    class_cross: [crosswalk]
+    class_bump: [bump_sign, bump_warn]
+    class_light: [traffic_light]
+    sign_confirm: 2
+    light_confirm: 3
+    max_sign_distance_m: 6.0
+    light_lost_s: 2.0
+    debug_image_hz: 2.0
+    hsv_s_min: 90
+    hsv_v_min: 140
+    spot_enabled: true
+    camera_x: 0.28           # как static TF base_link -> camera_link
+    camera_y: 0.0
+    camera_z: 0.385
+    camera_pitch_deg: 10.0
+    spot_s_min: 110
+    spot_v_min: 60
+    spot_min_area_m2: 0.02
+    spot_max_area_m2: 2.5
+    spot_max_range_m: 3.5
+
+ble_node:
+  ros__parameters:
+    point_ids: [kpp, admin, testing, depot]
+    names: [ATSD-KPP, ATSD-ADMIN, ATSD-TEST, ATSD-SKLAD]
+    ibeacon_uuid: E2C56DB5-DFFB-48D2-B060-D0F5A71096E0
+    ibeacon_minors: [1, 2, 3, 4]
+    near_rssi: -65
+    hysteresis: 5
+    lost_s: 4.0
+    rate_hz: 2.0
+    adapter: hci0
 
 gnss_node:
   ros__parameters:
-    port: /dev/gnss              # ttyAMA2, GPIO4/5 — см. udev и config.txt
-    baud: 115200                 # целевая; из коробки модуль на 9600,
-                                 # узел сам найдёт его перебором и переключит
+    port: /dev/gnss
+    baud: 115200
     frame_id: gnss_link
     min_satellites: 4
-
-    configure_module: true       # UBX-настройка при старте
-    nav_rate_hz: 5.0             # решений в секунду вместо заводской одной
-    save_config: true            # сохранить в батарейное ОЗУ модуля
-    fix_timeout_s: 3.0           # молчит дольше — публикуем NO_FIX
-    uere_m: 2.5                  # горизонтальная ошибка на единицу HDOP
+    configure_module: true
+    nav_rate_hz: 5.0
+    save_config: true
+    fix_timeout_s: 3.0
+    uere_m: 2.5
 
 battery_node:
   ros__parameters:
     i2c_bus: 1
-    address: 0x36              # гейдж X1202, совместим с MAX17040
+    address: 0x36
     cells: 4
     rate_hz: 1.0
     low_pct: 20.0
 
 web_node:
   ros__parameters:
-    mock: false                # true — телеметрия из имитатора, без робота
+    mock: false
     port: 8080
 
-# ── Драйвер камеры v4l2_camera ──
 v4l2_camera:
   ros__parameters:
-    video_device: /dev/video0
-    pixel_format: MJPG           # без MJPG получите 5 кадров вместо 30
+    video_device: /dev/camera
+    pixel_format: MJPG
     output_encoding: rgb8
     image_size: [1280, 720]
     camera_frame_id: camera_link
     time_per_frame: [1, 30]
 
-# ── Лидар LDROBOT D500 Kit (LD19), свой узел atsd_sensors ──
-# Подключён к аппаратному UART: лидар только передаёт, 230400 бод.
-# Скорость менять нельзя, она зашита в прошивку дальномера.
 lidar_node:
   ros__parameters:
-    port: /dev/lidar             # ttyAMA0, GPIO15 (пин 10)
+    port: /dev/lidar
     baud: 230400
     frame_id: laser_frame
     topic: scan
-
-    bins: 455                    # точек в кадре: 4500 отсчётов/с при 10 Гц
+    bins: 455
     range_min: 0.05
     range_max: 12.0
-    min_intensity: 0             # поднять, если ловит засветку от солнца
-    invert: true                 # развёртка по часовой -> против, как в ROS
-    angle_offset_deg: 0.0        # ставить, если корпус лидара повёрнут
-
+    min_intensity: 0
+    invert: true
+    angle_offset_deg: 0.0
     check_crc: true
-    # Сектор, который закрывает грузовой отсек. Пары градусов,
-    # [0.0, 0.0] — ничего не режем. Корма примерно [150.0, -150.0].
     crop_deg: [0.0, 0.0]

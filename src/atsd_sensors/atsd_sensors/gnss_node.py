@@ -1,36 +1,4 @@
 #!/usr/bin/env python3
-"""
-atsd_sensors · gnss_node
-
-Драйвер приёмника BN-880 (u-blox NEO-M8N) на аппаратном UART.
-
-Публикует:
-    /gnss/fix        sensor_msgs/NavSatFix                 координаты
-    /gnss/vel        geometry_msgs/TwistWithCovarianceStamped   скорость ENU
-    /gnss/status     std_msgs/String                       спутники, HDOP, тип
-    /diagnostics     diagnostic_msgs/...                   для агрегатора
-
-Что делает узел, чего не делает модуль сам
-    Из коробки BN-880 выдаёт NMEA на 9600 бод и 1 Гц. Одного решения
-    в секунду мало: на 1,5 м/с робот за такт проезжает полтора метра,
-    и навигация едет рывками. При старте узел ищет модуль перебором
-    скоростей, командами UBX переводит его на 5 Гц и 115200, отключает
-    болтливые GSV и GLL — на 9600 они забивают весь канал и GGA
-    начинает опаздывать на полсекунды.
-
-Честный NO_FIX
-    Без фикса узел публикует STATUS_NO_FIX и не повторяет последние
-    координаты. Иначе EKF в robot_localization тянет робота к призрачной
-    точке — в помещении, где спутников нет вовсе, это гарантированный увод.
-    Сторожевой таймер отдельно ловит случай «модуль замолчал»: раньше
-    при обрыве провода статус навсегда застывал на последнем хорошем.
-
-О скорости
-    /gnss/vel — скорость в ENU (x на восток, y на север), посчитанная
-    из RMC. Это не скорость в связанных осях робота: курса от одного
-    GNSS без движения не бывает. navsat_transform ждёт именно ENU.
-"""
-
 import math
 import threading
 import time
@@ -49,22 +17,19 @@ from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
 KNOTS_TO_MS = 0.514444
 
-# Качество фикса в поле GGA -> статус ROS
 GGA_QUALITY = {
     0: NavSatStatus.STATUS_NO_FIX,
-    1: NavSatStatus.STATUS_FIX,          # автономное решение
-    2: NavSatStatus.STATUS_SBAS_FIX,     # дифференциальное
-    4: NavSatStatus.STATUS_GBAS_FIX,     # RTK fixed
-    5: NavSatStatus.STATUS_GBAS_FIX,     # RTK float
+    1: NavSatStatus.STATUS_FIX,
+    2: NavSatStatus.STATUS_SBAS_FIX,
+    4: NavSatStatus.STATUS_GBAS_FIX,
+    5: NavSatStatus.STATUS_GBAS_FIX,
 }
 
-# Идентификаторы NMEA-сообщений в UBX CFG-MSG, класс 0xF0
 NMEA_ID = {'GGA': 0x00, 'GLL': 0x01, 'GSA': 0x02,
            'GSV': 0x03, 'RMC': 0x04, 'VTG': 0x05, 'ZDA': 0x08}
 
 
 def ubx(cls_id: int, msg_id: int, payload: bytes = b'') -> bytes:
-    """Собрать кадр UBX с контрольной суммой Флетчера."""
     body = bytes([cls_id, msg_id]) + len(payload).to_bytes(2, 'little') + payload
     ck_a = ck_b = 0
     for b in body:
@@ -79,14 +44,14 @@ class GnssNode(Node):
         super().__init__('gnss_node')
 
         self.declare_parameter('port', '/dev/gnss')
-        self.declare_parameter('baud', 115200)          # целевая скорость
+        self.declare_parameter('baud', 115200)
         self.declare_parameter('frame_id', 'gnss_link')
         self.declare_parameter('min_satellites', 4)
         self.declare_parameter('configure_module', True)
         self.declare_parameter('nav_rate_hz', 5.0)
-        self.declare_parameter('save_config', True)     # сохранить в BBR
+        self.declare_parameter('save_config', True)
         self.declare_parameter('fix_timeout_s', 3.0)
-        self.declare_parameter('uere_m', 2.5)           # ошибка на единицу HDOP
+        self.declare_parameter('uere_m', 2.5)
 
         p = self.get_parameter
         self.port = p('port').value
@@ -105,16 +70,15 @@ class GnssNode(Node):
         self.pub_status = self.create_publisher(String, 'gnss/status', 5)
         self.pub_diag = self.create_publisher(DiagnosticArray, '/diagnostics', 5)
 
-        # состояние
         self.sats_used = 0
         self.sats_view = 0
         self.hdop = 99.9
         self.vdop = 99.9
         self.quality = 0
-        self.fix_type = 1               # 1 нет, 2 плоский, 3 объёмный
+        self.fix_type = 1
         self.speed_ms = 0.0
         self.course_deg = None
-        self.last_gga = None            # время последнего GGA
+        self.last_gga = None
         self.baud = None
 
         self.ser = None
@@ -125,9 +89,7 @@ class GnssNode(Node):
         self.create_timer(0.5, self._watchdog)
         self.create_timer(1.0, self._diag)
 
-    # ───────────────────────────────────────── открытие и настройка
     def _probe(self, baud: int, seconds: float = 1.2) -> bool:
-        """Есть ли на этой скорости осмысленный поток NMEA."""
         try:
             self.ser = serial.Serial(self.port, baud, timeout=0.2)
         except (serial.SerialException, OSError) as e:
@@ -151,7 +113,6 @@ class GnssNode(Node):
         return False
 
     def _open(self) -> bool:
-        """Найти модуль перебором скоростей и настроить его."""
         candidates = [self.target_baud, 9600, 38400, 115200, 57600]
         seen = []
         for b in candidates:
@@ -176,15 +137,11 @@ class GnssNode(Node):
         return self.ser is not None
 
     def _configure(self):
-        """Скорость обмена, частота решений, нужный набор сообщений."""
-        # Лишние сообщения — прочь. На 5 Гц GSV занимает больше эфира,
-        # чем все остальные вместе.
         for name, rate in (('GGA', 1), ('GSA', 1), ('RMC', 1),
                            ('VTG', 0), ('GLL', 0), ('GSV', 5)):
             self.ser.write(ubx(0x06, 0x01, bytes([0xF0, NMEA_ID[name], rate])))
             time.sleep(0.02)
 
-        # CFG-RATE: период решения в миллисекундах
         meas_ms = max(100, int(round(1000.0 / max(self.nav_rate, 0.5))))
         self.ser.write(ubx(0x06, 0x08,
                            meas_ms.to_bytes(2, 'little') +
@@ -193,7 +150,6 @@ class GnssNode(Node):
         time.sleep(0.05)
 
         if self.baud != self.target_baud:
-            # CFG-PRT: порт 1 (UART), 8N1, NMEA+UBX в обе стороны
             payload = (bytes([0x01, 0x00]) +
                        (0x0000).to_bytes(2, 'little') +
                        (0x000008D0).to_bytes(4, 'little') +
@@ -206,7 +162,6 @@ class GnssNode(Node):
             self.ser.flush()
             time.sleep(0.2)
             self.ser.close()
-            # Ответа не будет: модуль отвечает уже на новой скорости
             if self._probe(self.target_baud, seconds=2.0):
                 self.baud = self.target_baud
                 self.get_logger().info(f'Переключился на {self.baud} бод')
@@ -218,8 +173,6 @@ class GnssNode(Node):
                     return
 
         if self.save_cfg:
-            # CFG-CFG: сохранить в батарейное ОЗУ, чтобы после
-            # перезагрузки не настраивать заново
             self.ser.write(ubx(0x06, 0x09,
                                (0x00000000).to_bytes(4, 'little') +
                                (0x0000061F).to_bytes(4, 'little') +
@@ -227,7 +180,6 @@ class GnssNode(Node):
                                bytes([0x01])))
             time.sleep(0.05)
 
-    # ───────────────────────────────────────── поток чтения
     def _reader(self):
         while self._alive:
             if self.ser is None:
@@ -298,9 +250,8 @@ class GnssNode(Node):
         vel.header.frame_id = self.frame_id
         if self.course_deg is not None:
             c = math.radians(self.course_deg)
-            vel.twist.twist.linear.x = self.speed_ms * math.sin(c)   # восток
-            vel.twist.twist.linear.y = self.speed_ms * math.cos(c)   # север
-        # Доплеровская скорость у M8N точнее координат: порядка 0,1 м/с
+            vel.twist.twist.linear.x = self.speed_ms * math.sin(c)
+            vel.twist.twist.linear.y = self.speed_ms * math.cos(c)
         sigma_v = 0.1 if self.speed_ms > 0.5 else 0.3
         vel.twist.covariance[0] = sigma_v ** 2
         vel.twist.covariance[7] = sigma_v ** 2
@@ -315,9 +266,6 @@ class GnssNode(Node):
         except (TypeError, ValueError):
             self.quality, self.sats_used = 0, 0
 
-        # Пустое поле широты pynmea2 отдаёт нулём, а не None:
-        # проверять надо исходную строку, иначе точка (0, 0) в Гвинейском
-        # заливе уезжает в NavSatFix как настоящая
         has_coords = bool(getattr(msg, 'lat', '')) and bool(getattr(msg, 'lon', ''))
         has_fix = (self.quality > 0 and self.sats_used >= self.min_sats
                    and has_coords)
@@ -353,9 +301,7 @@ class GnssNode(Node):
 
         self.pub_fix.publish(fix)
 
-    # ───────────────────────────────────────── сторож и диагностика
     def _watchdog(self):
-        """Модуль замолчал — сказать об этом вслух, а не держать старый статус."""
         if self.last_gga is None:
             return
         silence = (self.get_clock().now() - self.last_gga).nanoseconds * 1e-9
