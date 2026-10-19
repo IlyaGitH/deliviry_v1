@@ -206,7 +206,7 @@ sudo bash install.sh --with-yolo
 sudo reboot
 ```
 
-Скрипт ставит ROS 2 Jazzy, Nav2 и slam_toolbox, создаёт пользователя `atsd`,
+Скрипт ставит ROS 2 Jazzy, Nav2 и slam_toolbox, отдаёт Wi-Fi NetworkManager, создаёт пользователя `atsd`,
 собирает workspace в `/opt/atsd/ws`, прописывает сервисы и udev-правила,
 включает UART0 на GPIO14/15 под GNSS, I2C под X1202, снимает лимит
 600 мА на USB. Идемпотентен.
@@ -252,6 +252,31 @@ python3 -c "import setuptools, numpy, cv2; print(setuptools.__version__, numpy._
 ```
 
 Ожидается `68.1.2 1.26.4 4.6.0`.
+
+### Wi-Fi
+
+После загрузки робот ищет известные сети и подключается к ним сам
+(NetworkManager). Если за минуту подключиться не удалось, `atsd-wifi`
+поднимает свою точку доступа: сеть `ATSD-1M`, пароль из
+`/etc/atsd/wifi.conf` (установщик генерирует его и печатает в конце),
+веб-интерфейс — `http://10.42.0.1:8080`, SSH — `ssh <пользователь>@10.42.0.1`.
+
+Сеть, указанная при записи образа (Raspberry Pi Imager), становится
+известной автоматически. Добавить ещё одну:
+
+```bash
+sudo nmcli con add type wifi con-name Склад ssid "Склад-WiFi" \
+  wifi-sec.key-mgmt wpa-psk wifi-sec.psk "пароль"   # запомнить, не переключаясь
+sudo nmcli dev wifi connect "Склад-WiFi" password "пароль"   # подключиться сейчас
+nmcli con show                                            # список известных сетей
+```
+
+Из режима точки доступа робот сам обратно не переходит — в этом режиме
+Wi-Fi модуль Pi не сканирует эфир. Вернуться в известную сеть:
+перезагрузка или `sudo nmcli con up <сеть>` (из SSH через точку доступа
+связь при этом оборвётся). Имя сети, пароль, адрес и время ожидания
+(`WAIT_S`) — в `/etc/atsd/wifi.conf`, применяются после
+`sudo systemctl restart atsd-wifi`. Журнал: `journalctl -u atsd-wifi`.
 
 ### Обновление с прошлой версии
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=ATSD | Wi-Fi: известная сеть, иначе своя точка доступа
+After=NetworkManager.service
+Requires=NetworkManager.service
+
+[Service]
+Type=simple
+ExecStart=/opt/atsd/wifi.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
