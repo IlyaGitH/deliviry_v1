@@ -69,7 +69,7 @@ def check_v5():
                     events.append(text[2:])
         s.close()
         if info:
-            report('VEX V5 прошивка', info.startswith('ATSD-1M 2.'), f'{info} ({dev})')
+            report('VEX V5 прошивка', info.startswith('ATSD-1M 3.'), f'{info} ({dev})')
         else:
             report('VEX V5 прошивка', False, 'ответа нет: программа на Brain не запущена?')
         rate = e_lines / max(time.time() - t0, 0.1)

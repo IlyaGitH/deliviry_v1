@@ -19,27 +19,25 @@ const EVENT_RU = {
   STOP_SIGN_GO: 'Продолжаю движение после «Стоп»', CROSSWALK_SLOW: 'Пешеходный переход — снижаю скорость',
   BUMP_SLOW: 'Искусственная неровность — снижаю скорость', RED_LIGHT_STOP: 'Красный сигнал — остановка',
   GREEN_GO: 'Зелёный сигнал — движение', OBSTACLE_STOP: 'Препятствие — остановка',
-  OBSTACLE_CLEAR: 'Путь свободен', DETOUR_START: 'Объезд препятствия', DETOUR_DONE: 'Объезд завершён',
-  BLOCKED_WAITING: 'Проезд перекрыт, ожидание', RECOVERY: 'Нештатная ситуация: отъезд и объезд',
+  OBSTACLE_CLEAR: 'Путь свободен', NAV_FAILED: 'Не удалось проложить или пройти путь по карте',
+  RECOVERY: 'Нештатная ситуация: отъезд назад',
   STALL: 'Застревание колёс', BUMPER: 'Касание бампера', FAULT: 'Сбой', LINK_LOST: 'Потеряна связь с Pi',
   LINK_OK: 'Связь с Pi восстановлена', GYRO_FAULT: 'Отказ гироскопа — курс по энкодерам',
   GYRO_READY: 'Гироскоп откалиброван', NUDGE_ON: 'Оператор подруливает', NUDGE_OFF: 'Подруливание закончено', GYRO_SIGN_FLIPPED: 'Знак гироскопа был перепутан — исправлен автоматически', MOTOR_MISSING: 'Отключился мотор', MOTOR_BACK: 'Мотор снова на связи',
   MOTOR_HOT: 'Перегрев мотора — снижаю скорость', MOTOR_COOL: 'Моторы остыли', BATT_LOW: 'Низкий заряд привода',
   ESTOP: 'Аварийный стоп', ESTOP_RELEASE: 'Аварийный стоп снят', MISSION_ABORT: 'Рейс отменён',
   LOCK_TAMPER: 'Крышку открыли в пути!', REJECT: 'Команда отклонена', RETURNED_BASE: 'Вернулся на базу',
-  DOCK_SEARCH: 'Подъезд к точке, ищу красную разметку', DOCK_SPOT: 'Разметка найдена',
-  DOCK_WAIT: 'Разметка не видна, жду', DOCKED: 'Встал на разметку, координаты уточнены',
-  DOCK_NOT_FOUND: 'Разметка не найдена, стою по счислению', ZONE_OK: 'BLE-метка точки подтверждена',
+  ZONE_OK: 'BLE-метка точки подтверждена',
   ZONE_MISMATCH: 'Рядом метка другой точки!', ZONE_UNCONFIRMED: 'BLE-метка точки не обнаружена',
   ZONE_UNCONFIRMED_UNLOCK: 'Отсек открыт без подтверждения BLE-метки',
 };
 const POINT_NAME = (id) => ((CFG.points || []).find(p => p.id === id) || {}).name || id;
-const EVENT_SKIP = new Set(['STATE', 'IGNORED_C', 'IGNORED_U', 'POSE_RESET', 'GYRO_CALIBRATING']);
+const EVENT_SKIP = new Set(['STATE', 'IGNORED_C', 'IGNORED_U', 'GYRO_CALIBRATING']);
 const EVENT_WARN = new Set(['FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
-  'MOTOR_HOT', 'BATT_LOW', 'ESTOP', 'LOCK_TAMPER', 'REJECT', 'RECOVERY', 'BLOCKED_WAITING',
-  'DOCK_NOT_FOUND', 'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'ZONE_UNCONFIRMED_UNLOCK', 'GYRO_SIGN_FLIPPED']);
-const EVENT_GOOD = new Set(['ARRIVED_PICKUP', 'ARRIVED_DROP', 'DELIVERED', 'DETOUR_DONE', 'GREEN_GO',
-  'STOP_SIGN_GO', 'CARGO_LOADED', 'CARGO_UNLOADED', 'DOCKED', 'ZONE_OK']);
+  'MOTOR_HOT', 'BATT_LOW', 'ESTOP', 'LOCK_TAMPER', 'REJECT', 'RECOVERY', 'NAV_FAILED',
+  'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'ZONE_UNCONFIRMED_UNLOCK', 'GYRO_SIGN_FLIPPED']);
+const EVENT_GOOD = new Set(['ARRIVED_PICKUP', 'ARRIVED_DROP', 'DELIVERED', 'OBSTACLE_CLEAR', 'GREEN_GO',
+  'STOP_SIGN_GO', 'CARGO_LOADED', 'CARGO_UNLOADED', 'ZONE_OK']);
 let lastEventSeq = 0;
 
 function renderEvents(list) {

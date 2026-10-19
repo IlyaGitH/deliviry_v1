@@ -131,6 +131,10 @@ http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
   fi
 fi
 
+if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
+  apt_install ros-${ROS_DISTRO_NAME}-navigation2 ros-${ROS_DISTRO_NAME}-slam-toolbox
+fi
+
 log "Python-зависимости"
 pip3 install --break-system-packages --upgrade \
      pynmea2 smbus2 fastapi 'uvicorn[standard]' pydantic bleak || \
@@ -152,8 +156,8 @@ for g in gpio i2c video bluetooth; do
   getent group "$g" >/dev/null || groupadd "$g"
 done
 usermod -aG dialout,video,gpio,i2c,plugdev,bluetooth "${ATSD_USER}"
-mkdir -p "${ATSD_HOME}" "${ATSD_HOME}/models"
-chown "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}" "${ATSD_HOME}/models"
+mkdir -p "${ATSD_HOME}" "${ATSD_HOME}/models" "${ATSD_HOME}/maps"
+chown "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}" "${ATSD_HOME}/models" "${ATSD_HOME}/maps"
 
 log "Настраиваю config.txt"
 CONFIG=/boot/firmware/config.txt
@@ -185,6 +189,36 @@ fi
 rfkill unblock bluetooth 2>/dev/null || true
 systemctl enable --now bluetooth 2>/dev/null || warn "bluetooth.service не запустился"
 
+log "Wi-Fi: известные сети, иначе своя точка доступа"
+# Wi-Fi отдаём NetworkManager; сеть, заданная при прошивке образа, станет его профилем.
+# Ставим без запуска: иначе он сразу заберёт wlan0 и оборвёт SSH посреди установки
+trap 'rm -f /usr/sbin/policy-rc.d' EXIT
+printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d
+apt_install network-manager dnsmasq-base
+rm -f /usr/sbin/policy-rc.d
+mkdir -p /etc/netplan /etc/atsd
+cat > /etc/netplan/90-atsd-wifi.yaml <<'NETPLAN'
+network:
+  version: 2
+  wifis:
+    renderer: NetworkManager
+NETPLAN
+chmod 600 /etc/netplan/90-atsd-wifi.yaml
+netplan generate || warn "netplan generate не прошёл — проверьте /etc/netplan"
+if [[ ! -f /etc/atsd/wifi.conf ]]; then
+  AP_PASS_NEW="$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 10 || true)"
+  cat > /etc/atsd/wifi.conf <<WIFICONF
+# Своя точка доступа, если известной сети нет WAIT_S секунд
+AP_SSID=ATSD-1M
+AP_PASS=${AP_PASS_NEW}
+AP_ADDR=10.42.0.1/24
+WAIT_S=60
+IFACE=wlan0
+WIFICONF
+  chmod 600 /etc/atsd/wifi.conf
+fi
+AP_INFO="$(grep -E '^AP_(SSID|PASS)=' /etc/atsd/wifi.conf | tr '\n' ' ')"
+
 log "Копирую исходники в ${WS_DIR}"
 mkdir -p "${WS_DIR}/src"
 rsync -a --delete \
@@ -204,6 +238,7 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
   " || die "Сборка не прошла. Смотрите ${WS_DIR}/log/latest_build"
 
   for f in atsd_drive/lib/atsd_drive/v5_bridge_node \
+           atsd_drive/lib/atsd_drive/nav_node \
            atsd_actuators/lib/atsd_actuators/light_node \
            atsd_actuators/lib/atsd_actuators/lock_node \
            atsd_sensors/lib/atsd_sensors/lidar_node \
@@ -224,6 +259,7 @@ fi
 
 log "Ставлю сервисы и правила"
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" "${ATSD_HOME}/run.sh"
+install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/wifi.sh" "${ATSD_HOME}/wifi.sh"
 install -m 755 "${WS_DIR}/src/atsd_bringup/scripts/hw_check.py" "${ATSD_HOME}/hw_check.py"
 install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
@@ -251,15 +287,19 @@ systemctl daemon-reload
 mkdir -p "${ATSD_HOME}/data"
 chown -R "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}/data"
 
-systemctl enable atsd.target atsd-drive atsd-actuators atsd-sensors atsd-perception atsd-web
+systemctl enable NetworkManager atsd-wifi
+systemctl enable atsd.target atsd-drive atsd-actuators atsd-sensors atsd-perception atsd-nav atsd-web
 
 log "Готово"
 cat <<MSG
 
 Дальше по порядку:
 
-  1. Перезагрузиться — применятся config.txt и группы пользователя:
+  1. Перезагрузиться — применятся config.txt, группы пользователя и Wi-Fi:
        sudo reboot
+     Робот подключится к известной сети, а если её нет минуту — поднимет
+     свою: ${AP_INFO}(/etc/atsd/wifi.conf),
+     веб-интерфейс тогда на http://10.42.0.1:8080
 
   2. Проверить железо без ROS (сервисы на время проверки остановить):
        sudo systemctl stop atsd.target
@@ -272,7 +312,10 @@ cat <<MSG
      (папка после  yolo export model=best.pt format=ncnn), затем:
        sudo chown -R ${ATSD_USER}: ${ATSD_HOME}/models
 
-  4. Запустить всё:
+  4. Построить карту (один раз, и после перестановки в помещении) —
+     раздел «Карта» в README. Без карты ${ATSD_HOME}/maps/map рейсы не поедут.
+
+  5. Запустить всё:
        sudo systemctl start atsd.target
        journalctl -u atsd-drive -f
      Веб-интерфейс: http://<адрес-пи>:8080

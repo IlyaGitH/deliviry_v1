@@ -12,9 +12,7 @@ ONESHOT = {
     'ARRIVED_DROP': 'arrive',
     'DELIVERED': 'double',
     'REJECT': 'double',
-    'DETOUR_START': 'double',
-    'DOCKED': 'beep',
-    'DOCK_NOT_FOUND': 'double',
+    'NAV_FAILED': 'double',
     'ZONE_MISMATCH': 'double',
 }
 ONESHOT_LEN = {'beep': 0.2, 'double': 0.4, 'start': 1.0, 'arrive': 1.2}

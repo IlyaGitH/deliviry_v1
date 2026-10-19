@@ -72,6 +72,7 @@ class RosLink:
         from sensor_msgs.msg import BatteryState, NavSatFix, NavSatStatus
         from std_msgs.msg import Bool, Empty, String
         from std_srvs.srv import Trigger
+        from tf2_ros import Buffer, TransformException, TransformListener
 
         if not rclpy.ok():
             rclpy.init()
@@ -82,12 +83,21 @@ class RosLink:
         self._empty = Empty
         self._string = String
 
-        def on_odom(msg: Odometry):
-            q = msg.pose.pose.orientation
+        tf_buf = Buffer()
+        tf_listener = TransformListener(tf_buf, node)  # noqa: F841 — держит подписку на /tf
+
+        def pose_from_tf():
+            # Поза в карте лидара; одометрия Brain только для скорости
+            try:
+                t = tf_buf.lookup_transform('map', 'base_link', rclpy.time.Time())
+            except TransformException:
+                return
+            q = t.transform.rotation
             yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+            self._set(['pose'], {'x': t.transform.translation.x, 'y': t.transform.translation.y, 'yaw': yaw})
+
+        def on_odom(msg: Odometry):
             with self._lock:
-                self._state['pose'] = {'x': msg.pose.pose.position.x,
-                                       'y': msg.pose.pose.position.y, 'yaw': yaw}
                 self._state['speed'] = abs(msg.twist.twist.linear.x)
                 self._state['connected'] = True
 
@@ -158,6 +168,7 @@ class RosLink:
         try:
             while rclpy.ok() and not self._stop.is_set():
                 rclpy.spin_once(node, timeout_sec=0.1)
+                pose_from_tf()
         finally:
             node.destroy_node()
 
@@ -166,7 +177,7 @@ class RosLink:
             self.log('Режим имитации: сценарий прошивки без робота')
         x, y, yaw = 0.0, 0.0, 0.0
         st = {'state': 'IDLE', 'from': None, 'to': None, 'pause': [], 'flags': [],
-              'remain_m': 0.0, 'mission_s': 0.0, 'link': True, 'wp': 0, 'wp_count': 0}
+              'remain_m': 0.0, 'mission_s': 0.0, 'link': True}
         target, t0, drive, comp = None, None, 92.0, 88.0
         pts = {}
         with self._lock:
@@ -200,16 +211,10 @@ class RosLink:
                 dist = math.hypot(dx, dy)
                 step = 0.55 * 0.2
                 st['remain_m'] = round(dist, 1)
-                if dist < 2.5 and not st.get('dock'):
-                    st['dock'] = True
-                    self._event('DOCK_SEARCH')
-                    self._event('DOCK_SPOT 2400 30')
                 if dist < step:
                     x, y = target
                     arrived = st['state'] == 'TO_PICKUP'
                     goal = st['from'] if arrived else st['to']
-                    st['dock'] = False
-                    self._event(f'DOCKED {goal} 120')
                     self._event(f'ZONE_OK {goal} -58')
                     self._event('ARRIVED_PICKUP' if arrived else 'ARRIVED_DROP')
                     st['state'] = 'WAIT_LOAD' if arrived else 'WAIT_UNLOAD'

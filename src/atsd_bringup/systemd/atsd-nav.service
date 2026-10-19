@@ -1,0 +1,21 @@
+[Unit]
+Description=ATSD | Навигация по лидарной карте: slam_toolbox + Nav2
+After=network-online.target atsd-sensors.service atsd-drive.service
+PartOf=atsd.target
+
+[Service]
+Type=simple
+User=atsd
+Group=atsd
+WorkingDirectory=/opt/atsd
+Environment=HOME=/opt/atsd
+Environment=ROS_DOMAIN_ID=17
+Environment=RCUTILS_LOGGING_BUFFERED_STREAM=1
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGINT
+ExecStart=/opt/atsd/run.sh ros2 launch atsd_bringup nav.launch.py
+
+[Install]
+WantedBy=atsd.target

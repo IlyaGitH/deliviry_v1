@@ -13,6 +13,7 @@ def generate_launch_description():
         inc('actuators.launch.py'),
         inc('sensors.launch.py'),
         inc('perception.launch.py'),
+        inc('nav.launch.py'),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('atsd_web'),
                          'launch', 'web.launch.py'))),
