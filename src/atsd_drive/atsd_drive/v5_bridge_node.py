@@ -9,7 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 import serial
-from geometry_msgs.msg import Twist, TransformStamped, Quaternion, PoseWithCovarianceStamped
+from geometry_msgs.msg import Twist, TransformStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, Empty, Float32, String
@@ -23,10 +23,6 @@ def yaw_to_quat(yaw: float) -> Quaternion:
     q.z = math.sin(yaw * 0.5)
     q.w = math.cos(yaw * 0.5)
     return q
-
-
-def quat_to_yaw(q) -> float:
-    return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
 class V5BridgeNode(Node):
@@ -51,7 +47,6 @@ class V5BridgeNode(Node):
         d('base_frame', 'base_link')
         d('publish_tf', True)
         d('point_ids', ['kpp', 'admin', 'testing', 'depot'])
-        d('use_pose_correction', False)
         d('require_feeds', ['obstacle'])
         d('feed_timeout_s', 1.0)
 
@@ -89,7 +84,7 @@ class V5BridgeNode(Node):
         self.zero_sent = 0
 
         self.last_obst_sent = 0.0
-        self.last_spot_sent = 0.0
+        self.nav_remain = None
         self.last_zone_sent = 0.0
         self.last_nudge_sent = 0.0
         self.last_obst_text = ''
@@ -124,11 +119,10 @@ class V5BridgeNode(Node):
         self.create_subscription(String, 'perception/light', self.on_light, 10)
         self.create_subscription(String, 'perception/obstacle', self.on_obstacle, 10)
         self.create_subscription(Twist, 'cmd_nudge', self.on_nudge, 10)
-        self.create_subscription(String, 'perception/spot', self.on_spot, 10)
         self.create_subscription(String, 'ble/zone', self.on_zone, 10)
-        if bool(p('use_pose_correction')):
-            self.create_subscription(PoseWithCovarianceStamped, 'localization/pose_correction',
-                                     self.on_pose_correction, 5)
+        self.create_subscription(Twist, 'nav/cmd_vel', self.on_nav_cmd, 10)
+        self.create_subscription(String, 'nav/result', self.on_nav_result, 10)
+        self.create_subscription(Float32, 'nav/remain', lambda m: setattr(self, 'nav_remain', m.data), 10)
 
         self.create_timer(1.0 / float(p('cmd_rate_hz')), self.send_cmd_vel)
         self.create_timer(1.0 / float(p('heartbeat_hz')), self.send_heartbeat)
@@ -226,15 +220,15 @@ class V5BridgeNode(Node):
             level = self.get_logger().warn if msg.name in (
                 'FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
                 'MOTOR_HOT', 'BATT_LOW', 'RECOVERY', 'ESTOP', 'REJECT',
-                'DOCK_NOT_FOUND', 'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'GYRO_SIGN_FLIPPED') else self.get_logger().info
+                'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'GYRO_SIGN_FLIPPED') else self.get_logger().info
             level(f'Brain: {msg.raw}')
         elif isinstance(msg, proto.Info):
             if msg.text != self.firmware:
                 self.firmware = msg.text
                 self.pub_fw.publish(String(data=msg.text))
                 self.get_logger().info(f'Прошивка: {msg.text}')
-                if not msg.text.startswith('ATSD-1M 2.'):
-                    self.get_logger().error('Нужна прошивка ATSD-1M 2.x — старый протокол не поддерживается')
+                if not msg.text.startswith('ATSD-1M 3.'):
+                    self.get_logger().error('Нужна прошивка ATSD-1M 3.x (навигация по лидару) — старый протокол не поддерживается')
 
     def on_encoders(self, e: proto.Encoders):
         self.last_flags = e.flags
@@ -311,9 +305,8 @@ class V5BridgeNode(Node):
             'state': s.state,
             'from': self.point_id(s.from_idx),
             'to': self.point_id(s.to_idx),
-            'wp': s.wp,
-            'wp_count': s.wp_count,
-            'remain_m': round(s.remain_mm / 1000.0, 2),
+            'remain_m': round(self.nav_remain, 2) if self.nav_remain is not None and
+                        s.state in proto.TRAVEL_STATES else None,
             'pause': proto.decode_pause(s.pause),
             'mission_s': round(s.mission_ds / 10.0, 1),
             'flags': proto.decode_flags(self.last_flags),
@@ -425,18 +418,6 @@ class V5BridgeNode(Node):
             return
         self.send(proto.cmd_nudge(msg.linear.x, msg.angular.z))
 
-    def on_spot(self, msg: String):
-        if not self.last_flags & proto.FLAG_DOCKING:
-            return
-        try:
-            spot = proto.parse_spot_msg(msg.data)
-        except ValueError:
-            return
-        now = time.monotonic()
-        if spot and now - self.last_spot_sent >= 0.1:
-            self.last_spot_sent = now
-            self.send(proto.cmd_dock(*spot))
-
     def on_zone(self, msg: String):
         now = time.monotonic()
         if now - self.last_zone_sent < 0.4:
@@ -453,9 +434,17 @@ class V5BridgeNode(Node):
         idx = self.resolve_point(pid)
         self.send(proto.cmd_zone(idx if idx is not None else -1, rssi, near))
 
-    def on_pose_correction(self, msg: PoseWithCovarianceStamped):
-        pose = msg.pose.pose
-        self.send(proto.cmd_pose(pose.position.x, pose.position.y, quat_to_yaw(pose.orientation)))
+    def traveling(self):
+        return self.last_status is not None and self.last_status.state in proto.TRAVEL_STATES
+
+    def on_nav_cmd(self, msg: Twist):
+        if self.traveling():
+            self.send(proto.cmd_nav(msg.linear.x, msg.angular.z))
+
+    def on_nav_result(self, msg: String):
+        parts = msg.data.split()
+        if len(parts) == 2 and parts[0] in ('ok', 'fail'):
+            self.send(proto.cmd_nav_result(parts[1], parts[0] == 'ok'))
 
     def destroy_node(self):
         self.running = False

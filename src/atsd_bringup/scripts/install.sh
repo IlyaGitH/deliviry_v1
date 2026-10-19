@@ -131,6 +131,10 @@ http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
   fi
 fi
 
+if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
+  apt_install ros-${ROS_DISTRO_NAME}-navigation2 ros-${ROS_DISTRO_NAME}-slam-toolbox
+fi
+
 log "Python-зависимости"
 pip3 install --break-system-packages --upgrade \
      pynmea2 smbus2 fastapi 'uvicorn[standard]' pydantic bleak || \
@@ -152,8 +156,8 @@ for g in gpio i2c video bluetooth; do
   getent group "$g" >/dev/null || groupadd "$g"
 done
 usermod -aG dialout,video,gpio,i2c,plugdev,bluetooth "${ATSD_USER}"
-mkdir -p "${ATSD_HOME}" "${ATSD_HOME}/models"
-chown "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}" "${ATSD_HOME}/models"
+mkdir -p "${ATSD_HOME}" "${ATSD_HOME}/models" "${ATSD_HOME}/maps"
+chown "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}" "${ATSD_HOME}/models" "${ATSD_HOME}/maps"
 
 log "Настраиваю config.txt"
 CONFIG=/boot/firmware/config.txt
@@ -204,6 +208,7 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
   " || die "Сборка не прошла. Смотрите ${WS_DIR}/log/latest_build"
 
   for f in atsd_drive/lib/atsd_drive/v5_bridge_node \
+           atsd_drive/lib/atsd_drive/nav_node \
            atsd_actuators/lib/atsd_actuators/light_node \
            atsd_actuators/lib/atsd_actuators/lock_node \
            atsd_sensors/lib/atsd_sensors/lidar_node \
@@ -251,7 +256,7 @@ systemctl daemon-reload
 mkdir -p "${ATSD_HOME}/data"
 chown -R "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}/data"
 
-systemctl enable atsd.target atsd-drive atsd-actuators atsd-sensors atsd-perception atsd-web
+systemctl enable atsd.target atsd-drive atsd-actuators atsd-sensors atsd-perception atsd-nav atsd-web
 
 log "Готово"
 cat <<MSG
@@ -272,7 +277,10 @@ cat <<MSG
      (папка после  yolo export model=best.pt format=ncnn), затем:
        sudo chown -R ${ATSD_USER}: ${ATSD_HOME}/models
 
-  4. Запустить всё:
+  4. Построить карту (один раз, и после перестановки в помещении) —
+     раздел «Карта» в README. Без карты ${ATSD_HOME}/maps/map рейсы не поедут.
+
+  5. Запустить всё:
        sudo systemctl start atsd.target
        journalctl -u atsd-drive -f
      Веб-интерфейс: http://<адрес-пи>:8080

@@ -22,7 +22,11 @@ v5_bridge:
     base_frame: base_link
     publish_tf: true
     point_ids: [kpp, admin, testing, depot]   # = узлы 0..3 прошивки
-    use_pose_correction: false
+
+nav_node:
+  ros__parameters:
+    points_file: /opt/atsd/data/points.json  # точки в метрах карты, правятся в веб-интерфейсе
+    map_frame: map
 
 light_node:
   ros__parameters:

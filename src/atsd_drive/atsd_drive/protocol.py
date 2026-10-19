@@ -13,16 +13,14 @@ FLAGS = {
     8: 'battery_low',
     9: 'mission_active',
     10: 'paused',
-    11: 'detour',
     12: 'recovery',
     13: 'fault',
     14: 'manual',
     15: 'no_pi_link',
-    16: 'docking',
     17: 'zone_near',
+    18: 'nudge',
 }
 FLAG_ESTOP = 1 << 1
-FLAG_DOCKING = 1 << 16
 
 PAUSE = {
     1: 'estop',
@@ -67,9 +65,6 @@ class Status:
     state: str
     from_idx: int
     to_idx: int
-    wp: int
-    wp_count: int
-    remain_mm: int
     pause: int
     mission_ds: int
 
@@ -106,11 +101,9 @@ def parse_line(text: str):
                             int(parts[4]), int(parts[5]), int(parts[6]))
         if kind == 'P' and len(parts) >= 6:
             return Pose(*(int(v) for v in parts[1:6]))
-        if kind == 'S' and len(parts) >= 8:
-            wp, _, n = parts[4].partition('/')
+        if kind == 'S' and len(parts) >= 6:
             state = parts[1] if parts[1] in MISSION_STATES else 'UNKNOWN'
-            return Status(state, int(parts[2]), int(parts[3]), int(wp), int(n or 0),
-                          int(parts[5]), int(parts[6], 16), int(parts[7]))
+            return Status(state, int(parts[2]), int(parts[3]), int(parts[4], 16), int(parts[5]))
         if kind == 'K' and len(parts) >= 2:
             return Event(parts[1], parts[2:], text[2:])
         if kind == 'I':
@@ -148,11 +141,12 @@ def cmd_speed_limit(fraction: float) -> str:
     return f'L {pct}\n'
 
 
-def cmd_pose(x_m: float, y_m: float, yaw_rad: float = None) -> str:
-    base = f'P {int(round(x_m * 1000))} {int(round(y_m * 1000))}'
-    if yaw_rad is not None and math.isfinite(yaw_rad):
-        base += f' {int(round(math.degrees(yaw_rad) * 1000))}'
-    return base + '\n'
+def cmd_nav(lin_m_s: float, ang_rad_s: float) -> str:
+    return f'G {int(round(lin_m_s * 1000.0))} {int(round(ang_rad_s * 1000.0))}\n'
+
+
+def cmd_nav_result(state: str, ok: bool) -> str:
+    return f'{"Y" if ok else "Q"} {state}\n'
 
 
 def cmd_sign(kind: str, dist_m: float = 0.0) -> str:
@@ -183,10 +177,6 @@ def cmd_nudge(lin_m_s: float, ang_rad_s: float) -> str:
     return f'N {int(round(lin_m_s * 1000.0))} {int(round(ang_rad_s * 1000.0))}\n'
 
 
-def cmd_dock(fwd_m: float, lat_m: float) -> str:
-    return f'D {int(round(fwd_m * 1000))} {int(round(lat_m * 1000))}\n'
-
-
 def cmd_zone(idx: int, rssi: int = -127, near: bool = False) -> str:
     return f'B {int(idx)} {int(rssi)} {1 if near else 0}\n'
 
@@ -213,13 +203,6 @@ def parse_light_msg(text: str):
         return None
     dist = float(parts[1]) if len(parts) > 1 else 0.0
     return color, dist
-
-
-def parse_spot_msg(text: str):
-    parts = text.split()
-    if len(parts) < 2 or parts[0].lower() == 'none':
-        return None
-    return float(parts[0]), float(parts[1])
 
 
 def parse_zone_msg(text: str):

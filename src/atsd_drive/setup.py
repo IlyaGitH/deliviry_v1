@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'v5_bridge_node = atsd_drive.v5_bridge_node:main',
+            'nav_node = atsd_drive.nav_node:main',
         ],
     },
 )

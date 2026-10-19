@@ -326,12 +326,11 @@ def api_report(oid: str):
         'sign_recognized': bool(kinds & {'STOP_SIGN', 'CROSSWALK_SLOW', 'BUMP_SLOW'}),
         'traffic_light_recognized': 'RED_LIGHT_STOP' in kinds or 'GREEN_GO' in kinds,
         'obstacle_detected': 'OBSTACLE_STOP' in kinds,
-        'obstacle_bypassed': 'DETOUR_DONE' in kinds,
-        'docked_on_mark': sum(1 for e in events if e['text'].startswith('DOCKED')),
+        'obstacle_bypassed': 'OBSTACLE_CLEAR' in kinds,
         'zone_confirmed': sum(1 for e in events if e['text'].startswith('ZONE_OK')),
         'faults': [e['text'] for e in events if e['text'].split()[0] in
                    ('FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
-                    'MOTOR_HOT', 'BATT_LOW', 'RECOVERY', 'LOCK_TAMPER', 'ESTOP', 'DOCK_NOT_FOUND',
+                    'MOTOR_HOT', 'BATT_LOW', 'RECOVERY', 'LOCK_TAMPER', 'ESTOP', 'NAV_FAILED',
                     'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'ZONE_UNCONFIRMED_UNLOCK')],
         'events': events,
     }
@@ -386,6 +385,8 @@ def main(args=None):
     except Exception:
         pass
 
+    if not POINTS_FILE.exists():
+        _save(POINTS_FILE, DEFAULT_POINTS)  # nav_node берёт координаты точек отсюда
     link = RosLink(mock=mock, logger=print)
     link.start()
     print(f'АТСД-1М · веб-интерфейс на порту {port}{" · режим имитации" if mock else ""}')
