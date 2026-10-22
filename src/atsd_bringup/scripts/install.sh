@@ -203,14 +203,24 @@ printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/po
 apt_install network-manager dnsmasq-base
 rm -f /usr/sbin/policy-rc.d
 mkdir -p /etc/netplan /etc/atsd
-cat > /etc/netplan/90-atsd-wifi.yaml <<'NETPLAN'
+# Imager пишет wifis с renderer: networkd — перебить можно только на уровне самого wlan0.
+# Если wlan0 в netplan нет, NetworkManager и так управляет Wi-Fi сам
+rm -f /etc/netplan/90-atsd-wifi.yaml
+if grep -qs 'wlan0:' /etc/netplan/*.yaml; then
+  cat > /etc/netplan/90-atsd-wifi.yaml <<'NETPLAN'
 network:
   version: 2
   wifis:
-    renderer: NetworkManager
+    wlan0:
+      renderer: NetworkManager
 NETPLAN
-chmod 600 /etc/netplan/90-atsd-wifi.yaml
-netplan generate || warn "netplan generate не прошёл — проверьте /etc/netplan"
+  chmod 600 /etc/netplan/90-atsd-wifi.yaml
+  if ! netplan generate; then
+    rm -f /etc/netplan/90-atsd-wifi.yaml
+    netplan generate || true
+    warn "Не удалось отдать wlan0 NetworkManager — Wi-Fi остался как был, проверьте /etc/netplan"
+  fi
+fi
 if [[ ! -f /etc/atsd/wifi.conf ]]; then
   AP_PASS_NEW="$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 10 || true)"
   cat > /etc/atsd/wifi.conf <<WIFICONF
