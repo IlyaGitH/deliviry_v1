@@ -136,8 +136,9 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
 fi
 
 log "Python-зависимости"
-# Без --upgrade: иначе pip лезет обновлять пакеты из apt, не может их удалить и падает целиком
-pip3 install --break-system-packages \
+# --ignore-installed: свежему pydantic нужен typing_extensions новее, чем в apt, а удалить пакет
+# из apt pip не может. Ставим зависимости в /usr/local рядом, системные не трогаем
+pip3 install --break-system-packages --ignore-installed \
      pynmea2 smbus2 fastapi 'uvicorn[standard]' pydantic bleak || true
 python3 -c "import pynmea2, smbus2, fastapi, uvicorn, pydantic, bleak" || \
   die "Python-зависимости не поставились — смотрите ошибку pip выше"
