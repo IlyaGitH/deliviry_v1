@@ -136,9 +136,11 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
 fi
 
 log "Python-зависимости"
-pip3 install --break-system-packages --upgrade \
-     pynmea2 smbus2 fastapi 'uvicorn[standard]' pydantic bleak || \
-  warn 'Часть Python-зависимостей не поставилась — проверьте вручную'
+# Без --upgrade: иначе pip лезет обновлять пакеты из apt, не может их удалить и падает целиком
+pip3 install --break-system-packages \
+     pynmea2 smbus2 fastapi 'uvicorn[standard]' pydantic bleak || true
+python3 -c "import pynmea2, smbus2, fastapi, uvicorn, pydantic, bleak" || \
+  die "Python-зависимости не поставились — смотрите ошибку pip выше"
 
 if [[ ${WITH_YOLO} -eq 1 ]]; then
   log "Ставлю ncnn для распознавания знаков (без torch и CUDA)"
