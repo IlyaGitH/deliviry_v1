@@ -182,8 +182,11 @@ fi
 for tty in ttyAMA0 serial0; do
   systemctl disable --now "serial-getty@${tty}.service" 2>/dev/null || true
 done
-if [[ -f /boot/firmware/cmdline.txt ]] && grep -q 'console=serial0' /boot/firmware/cmdline.txt; then
-  warn "В cmdline.txt осталась console=serial0 — уберите, иначе GNSS молчит"
+CMDLINE=/boot/firmware/cmdline.txt
+if [[ -f ${CMDLINE} ]] && grep -q 'console=serial0' "${CMDLINE}"; then
+  cp "${CMDLINE}" "${CMDLINE}.bak.$(date +%s)"
+  sed -i 's/console=serial0,[0-9]* *//' "${CMDLINE}"
+  warn "Убрал console=serial0 из cmdline.txt — UART отдан GNSS, нужна перезагрузка"
 fi
 
 rfkill unblock bluetooth 2>/dev/null || true
