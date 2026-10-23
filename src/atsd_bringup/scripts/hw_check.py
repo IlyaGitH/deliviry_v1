@@ -138,8 +138,9 @@ def check_camera():
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        time.sleep(1.0)  # USB-камере нужна секунда на запуск, первые чтения пустые
         ok, frame = False, None
-        for _ in range(10):
+        for _ in range(30):
             ok, frame = cap.read()
             if ok:
                 break
