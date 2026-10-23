@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.0"
+#define FW_VERSION "3.0.1"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -40,6 +40,8 @@ const double GYRO_SIGN_GYRO_W = 0.15;
 const double GYRO_SIGN_EVIDENCE_S = 0.3;
 const double GYRO_SPIKE_W     = 4.0;
 const double GYRO_SPIKE_STRAIGHT_W = 1.2;
+const double GYRO_BIAS_TAU_S  = 2.0;   // за сколько секунд покоя выучивается уход гироскопа
+const double STILL_ENC_MM     = 0.2;   // колесо сдвинулось меньше за такт 10 мс — стоим
 
 const double V_CRUISE   = 550.0;
 const double V_MAX_EXT  = 900.0;
@@ -153,6 +155,7 @@ bool   estop = false;
 bool   gyroCal = false, gyroResync = true, gyroFault = false;
 double gyroPrevDeg = 0, gyroSuspectMs = 0;
 double gyroSignFix = 1.0, gyroSignEvidence = 0, gyroAccum = 0;
+double gyroBias = 0;  // рад/с
 uint32_t gyroSpikes = 0;
 
 struct Stats { uint32_t rxLines = 0, rxBad = 0, rxOverflow = 0, txDrop = 0, vIgnored = 0; } stats;
@@ -339,8 +342,17 @@ static void odomUpdate(double dt) {
   }
   if (!gyroCal) {
     double g = gyroYawDeg();
-    if (gyroResync) { gyroPrevDeg = g; gyroResync = false; }
+    if (gyroResync) { gyroPrevDeg = g; gyroResync = false; gyroBias = 0; }
     else { dyawG = gyroSignFix * d2r(g - gyroPrevDeg); gyroPrevDeg = g; gValid = true; }
+  }
+
+  // Гироскоп 276-2333 уходит и на месте. Пока моторы стоят и колёса не крутятся,
+  // учим этот уход и вычитаем его на ходу, а курс на покое не меняем
+  bool still = fabs(vOut) < 1.0 && fabs(wOut) < 0.01 &&
+               fabs(dL) < cfg::STILL_ENC_MM && fabs(dR) < cfg::STILL_ENC_MM;
+  if (gValid && dt > 0) {
+    if (still) gyroBias += (dt / cfg::GYRO_BIAS_TAU_S) * (dyawG / dt - gyroBias);
+    dyawG = still ? 0 : dyawG - gyroBias * dt;
   }
 
   if (gValid && dt > 0) {
@@ -350,6 +362,7 @@ static void odomUpdate(double dt) {
       if (gyroSignEvidence > 2.0) gyroSignEvidence = 2.0;
       if (gyroSignEvidence < -cfg::GYRO_SIGN_EVIDENCE_S) {
         gyroSignFix = -gyroSignFix;
+        gyroBias = -gyroBias;
         gyroSignEvidence = 0;
         dyawG = -dyawG;
         pose.yaw -= 2.0 * gyroAccum;
@@ -1043,7 +1056,7 @@ static void drawDiag() {
     uiText(4, y, C_BG, hl.inst[i] ? (hl.temp[i] >= cfg::TEMP_HOT_C ? C_YELLOW : color::white) : C_RED, fontType::mono15, b);
     y += 14;
   }
-  snprintf(b, sizeof b, "YAW %+8.1f gyro %s w %+.2f sp %lu", r2d(pose.yaw), gyroCal ? "CAL" : (gyroFault ? "FAULT>ENC" : (gyroSignFix < 0 ? "SIGN FLIP" : "OK")), wMeas, (unsigned long)gyroSpikes);
+  snprintf(b, sizeof b, "YAW %+8.1f gyro %s w %+.2f drift %+.2f/s", r2d(pose.yaw), gyroCal ? "CAL" : (gyroFault ? "FAULT>ENC" : (gyroSignFix < 0 ? "SIGN FLIP" : "OK")), wMeas, r2d(gyroBias));
   uiText(4, y, C_BG, gyroFault ? C_RED : color::white, fontType::mono15, b); y += 14;
   snprintf(b, sizeof b, "X %.0f Y %.0f  trip %.1fm  v %.0f", pose.x, pose.y, tripMm / 1000.0, vMeas);
   uiText(4, y, C_BG, color::white, fontType::mono15, b); y += 14;
