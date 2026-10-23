@@ -19,6 +19,8 @@ from atsd_web.ros_link import RosLink
 DATA_DIR = Path(os.environ.get('ATSD_DATA', '/opt/atsd/data'))
 POINTS_FILE = DATA_DIR / 'points.json'
 ORDERS_FILE = DATA_DIR / 'orders.json'
+MAP_YAML = Path(os.environ.get('ATSD_MAPS', '/opt/atsd/maps')) / 'indoor.yaml'
+MAP_PNG = DATA_DIR / 'map.png'
 
 DEFAULT_POINTS = [
     {'id': 'kpp',     'name': 'КПП',               'x': 2.0,  'y': 0.0, 'indoor': True},
@@ -35,6 +37,23 @@ DEFAULT_MAPS = {
 }
 
 _store_lock = threading.Lock()
+
+
+def robot_map():
+    """Карта из map_saver (indoor.yaml + .pgm) как подложка; PGM браузер не покажет — переводим в PNG."""
+    try:
+        import cv2
+        import yaml
+        meta = yaml.safe_load(MAP_YAML.read_text())
+        src = MAP_YAML.parent / meta['image']
+        mtime = int(src.stat().st_mtime)
+        if not MAP_PNG.exists() or MAP_PNG.stat().st_mtime < mtime:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(MAP_PNG), cv2.imread(str(src), cv2.IMREAD_GRAYSCALE))
+        return {'image': f'/api/map.png?v={mtime}', 'meters_per_pixel': float(meta['resolution']),
+                'origin': [float(v) for v in meta['origin'][:2]], 'label': 'Карта робота'}
+    except Exception:
+        return None
 
 
 def _load(path, fallback):
@@ -202,7 +221,16 @@ def index():
 
 @app.get('/api/config')
 def api_config():
-    return {'points': points(), 'maps': DEFAULT_MAPS}
+    maps = dict(DEFAULT_MAPS)
+    maps['indoor'] = robot_map() or maps['indoor']
+    return {'points': points(), 'maps': maps}
+
+
+@app.get('/api/map.png')
+def api_map_png():
+    if not MAP_PNG.exists():
+        raise HTTPException(404, 'Карты нет')
+    return FileResponse(str(MAP_PNG), media_type='image/png')
 
 
 @app.post('/api/points')
