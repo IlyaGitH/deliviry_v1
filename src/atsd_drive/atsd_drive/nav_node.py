@@ -29,7 +29,7 @@ class NavNode(Node):
         self.create_subscription(String, 'mission/state', self.on_state, 10)
 
         self.leg = None      # плечо, на которое отправлена цель
-        self.handle = None
+        self.goal = None
         self.result = None   # (плечо, ok): повторяем Brain, пока он не сменит состояние
         self.get_logger().info(f'Навигация по карте, точки из {self.points_file}')
 
@@ -49,9 +49,9 @@ class NavNode(Node):
             self.send_goal(leg)
 
     def cancel(self):
-        if self.handle is not None:
-            self.handle.cancel_goal_async()
-        self.handle = None
+        if self.goal is not None:
+            self.goal.cancel_goal_async()
+        self.goal = None
         self.leg = None
 
     def load_points(self):
@@ -93,16 +93,16 @@ class NavNode(Node):
         if not handle.accepted:
             self.finish(leg, False)
             return
-        self.handle = handle
+        self.goal = handle
         handle.get_result_async().add_done_callback(lambda f: self.on_result(leg, handle, f))
 
     def on_feedback(self, fb):
         self.pub_remain.publish(Float32(data=float(fb.feedback.distance_remaining)))
 
     def on_result(self, leg, handle, fut):
-        if handle is not self.handle:
+        if handle is not self.goal:
             return
-        self.handle = None
+        self.goal = None
         status = fut.result().status
         if status == GoalStatus.STATUS_CANCELED:
             self.leg = None
