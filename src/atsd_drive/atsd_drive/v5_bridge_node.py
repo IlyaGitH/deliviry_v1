@@ -92,6 +92,12 @@ class V5BridgeNode(Node):
         self.ex = self.ey = self.eth = 0.0
         self.prev_deg = None
         self.prev_t = None
+        # Brain после перезагрузки считает одометрию с нуля — для локализации это скачок
+        # на метры. Замечаем по времени Brain и продолжаем одометрию с последней позы
+        self.brain_ms = None
+        self.rebase = False
+        self.odom_off = (0.0, 0.0, 0.0)
+        self.last_odom = None
 
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              history=HistoryPolicy.KEEP_LAST,
@@ -209,9 +215,12 @@ class V5BridgeNode(Node):
             self.on_encoders(msg)
         elif isinstance(msg, proto.Pose):
             if self.odom_source == 'brain':
-                self.publish_odom(msg.x_mm / 1000.0, msg.y_mm / 1000.0,
-                                  math.radians(msg.yaw_mdeg / 1000.0),
-                                  msg.v_mm_s / 1000.0, msg.w_mrad_s / 1000.0)
+                raw = (msg.x_mm / 1000.0, msg.y_mm / 1000.0, math.radians(msg.yaw_mdeg / 1000.0))
+                if self.rebase and self.last_odom:
+                    self.odom_off = proto.odom_offset(self.last_odom, raw)
+                self.rebase = False
+                self.last_odom = proto.apply_offset(self.odom_off, raw)
+                self.publish_odom(*self.last_odom, msg.v_mm_s / 1000.0, msg.w_mrad_s / 1000.0)
         elif isinstance(msg, proto.Status):
             self.last_status = msg
             self.publish_state(msg)
@@ -232,6 +241,10 @@ class V5BridgeNode(Node):
 
     def on_encoders(self, e: proto.Encoders):
         self.last_flags = e.flags
+        if self.brain_ms is not None and e.brain_ms < self.brain_ms:
+            self.rebase = True
+            self.get_logger().warn('Brain перезагрузился — одометрия продолжится с последней позы')
+        self.brain_ms = e.brain_ms
         stamp = self.get_clock().now().to_msg()
 
         batt = BatteryState()

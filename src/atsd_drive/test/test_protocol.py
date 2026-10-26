@@ -52,3 +52,16 @@ def test_zone():
     assert p.cmd_zone(-1) == 'B -1 -127 0\n'
     assert p.parse_zone_msg('kpp -58 1') == ('kpp', -58, True)
     assert p.parse_zone_msg('none') is None
+
+
+def test_odom_continues_after_brain_reboot():
+    import math
+    last = (3.0, -2.0, math.radians(120))
+    raw0 = (0.0, 0.0, 0.0)
+    off = p.odom_offset(last, raw0)
+    x, y, yaw = p.apply_offset(off, raw0)
+    assert abs(x - 3.0) < 1e-9 and abs(y + 2.0) < 1e-9 and abs(yaw - last[2]) < 1e-9
+    # робот проехал 1 м вперёд по своей новой одометрии — в старой это 1 м вдоль курса 120°
+    x, y, _ = p.apply_offset(off, (1.0, 0.0, 0.0))
+    assert abs(x - (3.0 + math.cos(last[2]))) < 1e-9 and abs(y - (-2.0 + math.sin(last[2]))) < 1e-9
+    assert p.apply_offset((0.0, 0.0, 0.0), (1.0, 2.0, 0.5)) == (1.0, 2.0, 0.5)

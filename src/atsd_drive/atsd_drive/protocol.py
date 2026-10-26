@@ -81,6 +81,18 @@ class Info:
     text: str
 
 
+def odom_offset(last, raw):
+    """Сдвиг (x, y, yaw), с которым одометрия Brain после перезагрузки продолжится с позы last."""
+    oyaw = last[2] - raw[2]
+    c, s = math.cos(oyaw), math.sin(oyaw)
+    return last[0] - (c * raw[0] - s * raw[1]), last[1] - (s * raw[0] + c * raw[1]), oyaw
+
+
+def apply_offset(off, raw):
+    c, s = math.cos(off[2]), math.sin(off[2])
+    return off[0] + c * raw[0] - s * raw[1], off[1] + s * raw[0] + c * raw[1], raw[2] + off[2]
+
+
 def decode_flags(flags: int) -> list:
     return [name for bit, name in FLAGS.items() if flags & (1 << bit)]
 
