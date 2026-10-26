@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.2"
+#define FW_VERSION "3.0.3"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -87,6 +87,9 @@ const double   LIGHT_STOP_OFFSET_MM = 450.0;
 const double   OBST_SLOW_MM        = 1800.0;
 const double   OBST_STOP_MM        = 450.0;
 const uint32_t OBST_MSG_TIMEOUT_MS = 400;
+// Упёрлись вплотную дольше этого — отъезжаем назад на REC_BACK_MM: Nav2 сам назад не едет,
+// а у стены считает робота уже в столкновении и не даёт даже развернуться
+const uint32_t OBST_BACKOFF_MS     = 3000;
 
 const uint32_t LINK_TIMEOUT_MS   = 500;
 const uint32_t V_WATCHDOG_MS     = 300;
@@ -198,7 +201,7 @@ struct StopSign { bool pending = false, holding = false; double stopAt = 0; uint
 double zoneCrossEnd = -1, zoneBumpEnd = -1;
 struct Light { bool red = false; double stopAt = 0; char last = 'N'; } tLight;
 struct Obst { int dist = 0; char side = '?'; uint32_t last = 0; } obst;
-struct ObstWait { bool active = false; } obstWait;
+struct ObstWait { bool active = false; uint32_t blockSince = 0; } obstWait;
 struct Recovery { bool active = false; double startTrip = 0, yaw = 0; uint32_t t0 = 0; } rec;
 struct NavCmd { double v = 0, w = 0; uint32_t last = 0, idleSince = 0; } nav;
 struct Zone { int node = -1; int rssi = -127; bool near = false; uint32_t last = 0; } zone;
@@ -689,6 +692,14 @@ static void travelTick(double& v, double& w) {
   } else if (obstWait.active) {
     obstWait.active = false;
     logEvent("OBSTACLE_CLEAR");
+  }
+
+  if (!obstBlock) obstWait.blockSince = 0;
+  else if (!obstWait.blockSince) obstWait.blockSince = now ? now : 1;
+  else if (!pauseMask && now - obstWait.blockSince > cfg::OBST_BACKOFF_MS) {
+    obstWait.blockSince = 0;
+    startRecovery("OBSTACLE");
+    return;
   }
 
   bool navFresh = nav.last != 0 && (now - nav.last) < cfg::NAV_CMD_TIMEOUT_MS;
