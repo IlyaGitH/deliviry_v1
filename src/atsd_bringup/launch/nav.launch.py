@@ -22,9 +22,14 @@ def generate_launch_description():
     map_file = LaunchConfiguration('map')
     mapping = IfCondition(PythonExpression(["'", mode, "' == 'mapping'"]))
     driving = UnlessCondition(PythonExpression(["'", mode, "' == 'mapping'"]))
+    # При езде по карте сверяем со сканом каждый кадр, даже стоя: поза берётся из лидара,
+    # одометрия — только подсказка между сканами. При съёмке — по сдвигу, иначе карта пухнет
+    travel = PythonExpression(["'0.1' if '", mode, "' == 'mapping' else '0.0'"])
     slam_params = RewrittenYaml(source_file=os.path.join(share, 'config', 'slam.yaml'),
                                 param_rewrites={'mode': mode, 'map_file_name': PythonExpression(
-                                    ["'' if '", mode, "' == 'mapping' else '", map_file, "'"])},
+                                    ["'' if '", mode, "' == 'mapping' else '", map_file, "'"]),
+                                    'minimum_travel_distance': travel,
+                                    'minimum_travel_heading': travel},
                                 convert_types=True)
     slam = lambda name, cond: IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(slam_share, 'launch', name)),

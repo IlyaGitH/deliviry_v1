@@ -33,7 +33,7 @@ slam_toolbox:
 
     use_scan_matching: true
     use_scan_barycenter: true
-    minimum_travel_distance: 0.1
+    minimum_travel_distance: 0.1        # nav.launch.py: 0.1 при съёмке, 0 при езде по карте
     minimum_travel_heading: 0.1
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0
