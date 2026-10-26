@@ -9,6 +9,7 @@ let CFG = { points: [], maps: {} };
 let LAST = null;
 let mapMode = 'auto';
 let placing = null;
+let settingPose = null;  // null | 'pos' | {x, y} — «Робот здесь»
 let localPoints = null;
 const images = {};
 
@@ -32,6 +33,7 @@ const EVENT_RU = {
   ZONE_UNCONFIRMED_UNLOCK: 'Отсек открыт без подтверждения BLE-метки',
 };
 const POINT_NAME = (id) => ((CFG.points || []).find(p => p.id === id) || {}).name || id;
+EVENT_RU.POSE_SET = 'Положение робота задано вручную';
 const EVENT_SKIP = new Set(['STATE', 'IGNORED_C', 'IGNORED_U', 'GYRO_CALIBRATING']);
 const EVENT_WARN = new Set(['FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
   'MOTOR_HOT', 'BATT_LOW', 'ESTOP', 'LOCK_TAMPER', 'REJECT', 'RECOVERY', 'NAV_FAILED',
@@ -399,11 +401,36 @@ $('btnPlace').onclick = () => {
   toast(placing ? 'Выберите точку в списке и ткните в карту' : 'Расстановка выключена');
 };
 
-cv.addEventListener('pointerdown', (ev) => {
-  if (!placing || !localPoints) return;
+$('btnHere').onclick = () => {
+  settingPose = settingPose ? null : 'pos';
+  $('btnHere').classList.toggle('on', !!settingPose);
+  toast(settingPose ? 'Ткните в карту, где робот стоит на самом деле' : 'Отменено');
+};
+
+cv.addEventListener('pointerdown', async (ev) => {
   const r = cv.getBoundingClientRect();
   const v = view();
   const [wx, wy] = toWorld(v, ev.clientX - r.left, ev.clientY - r.top);
+  if (settingPose === 'pos') {
+    settingPose = { x: wx, y: wy };
+    toast('Теперь ткните, куда робот смотрит');
+    return;
+  }
+  if (settingPose) {
+    const pose = { ...settingPose, yaw: Math.atan2(wy - settingPose.y, wx - settingPose.x) };
+    settingPose = null;
+    $('btnHere').classList.remove('on');
+    try {
+      await api('/api/initialpose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pose),
+      });
+      toast('Поза задана, проверьте стрелку при езде');
+    } catch (e) { toast(e.message, true); }
+    return;
+  }
+  if (!placing || !localPoints) return;
   const p = localPoints.find(q => q.id === placing);
   if (p) { p.x = Math.round(wx * 10) / 10; p.y = Math.round(wy * 10) / 10; }
   renderPointList();

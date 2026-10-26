@@ -68,6 +68,7 @@ class RosLink:
     def _run_ros(self):
         import rclpy
         from rclpy.node import Node
+        from geometry_msgs.msg import PoseWithCovarianceStamped
         from nav_msgs.msg import Odometry
         from sensor_msgs.msg import BatteryState, NavSatFix, NavSatStatus
         from std_msgs.msg import Bool, Empty, String
@@ -162,6 +163,8 @@ class RosLink:
         self._pub_abort = node.create_publisher(Empty, '/mission/abort', 5)
         self._pub_resume = node.create_publisher(Empty, '/mission/resume', 5)
         self._unlock_cli = node.create_client(Trigger, '/lock/unlock')
+        self._pose_type = PoseWithCovarianceStamped
+        self._pub_pose = node.create_publisher(PoseWithCovarianceStamped, '/initialpose', 5)
 
         if self.log:
             self.log('Мост ROS поднят')
@@ -266,6 +269,26 @@ class RosLink:
         if self._node is None:
             return False
         self._pub_abort.publish(self._empty())
+        return True
+
+    def set_pose(self, x, y, yaw):
+        """Сбросить локализацию: робот стоит в (x, y) карты и смотрит под углом yaw."""
+        if self.mock:
+            self._set(['pose'], {'x': x, 'y': y, 'yaw': yaw})
+            return True
+        if self._node is None:
+            return False
+        msg = self._pose_type()
+        msg.header.frame_id = 'map'
+        msg.header.stamp = self._node.get_clock().now().to_msg()
+        msg.pose.pose.position.x = float(x)
+        msg.pose.pose.position.y = float(y)
+        msg.pose.pose.orientation.z = math.sin(yaw / 2)
+        msg.pose.pose.orientation.w = math.cos(yaw / 2)
+        msg.pose.covariance[0] = msg.pose.covariance[7] = 0.25
+        msg.pose.covariance[35] = 0.07
+        self._pub_pose.publish(msg)
+        self._event(f'POSE_SET {x:.2f} {y:.2f} {math.degrees(yaw):.0f}')
         return True
 
     def resume(self):

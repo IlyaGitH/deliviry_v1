@@ -78,6 +78,12 @@ class PointsIn(BaseModel):
     points: list
 
 
+class PoseIn(BaseModel):
+    x: float
+    y: float
+    yaw: float
+
+
 class OrderIn(BaseModel):
     from_id: str
     to_id: str
@@ -241,6 +247,13 @@ def api_points(body: PointsIn):
     with _store_lock:
         _save(POINTS_FILE, body.points)
     return {'ok': True, 'count': len(body.points)}
+
+
+@app.post('/api/initialpose')
+def api_initialpose(body: PoseIn):
+    if not link.set_pose(body.x, body.y, body.yaw):
+        raise HTTPException(503, 'Мост ROS не поднят')
+    return {'ok': True}
 
 
 @app.get('/api/orders')
