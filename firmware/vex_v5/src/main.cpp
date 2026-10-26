@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.1"
+#define FW_VERSION "3.0.2"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -29,6 +29,9 @@ const double WHEEL_DIAM_MM       = 101.6;
 const double WHEEL_PER_MOTOR_REV = 1.0;
 const double TRACK_EFF_MM        = 430.0;
 
+// false — курс только по энкодерам (лидар поправляет повороты). Старый гироскоп 276-2333
+// уходит так, что робот крутится на месте и его уводит при езде прямо
+const bool   USE_GYRO   = false;
 const double GYRO_SIGN  = -1.0;
 const double GYRO_SCALE = 1.0;
 const double GYRO_FAULT_ENC_W  = 0.6;
@@ -340,7 +343,7 @@ static void odomUpdate(double dt) {
     gyroCal = false; gyroResync = true;
     logEvent("GYRO_READY");
   }
-  if (!gyroCal) {
+  if (cfg::USE_GYRO && !gyroCal) {
     double g = gyroYawDeg();
     if (gyroResync) { gyroPrevDeg = g; gyroResync = false; gyroBias = 0; }
     else { dyawG = gyroSignFix * d2r(g - gyroPrevDeg); gyroPrevDeg = g; gValid = true; }
@@ -1056,7 +1059,7 @@ static void drawDiag() {
     uiText(4, y, C_BG, hl.inst[i] ? (hl.temp[i] >= cfg::TEMP_HOT_C ? C_YELLOW : color::white) : C_RED, fontType::mono15, b);
     y += 14;
   }
-  snprintf(b, sizeof b, "YAW %+8.1f gyro %s w %+.2f drift %+.2f/s", r2d(pose.yaw), gyroCal ? "CAL" : (gyroFault ? "FAULT>ENC" : (gyroSignFix < 0 ? "SIGN FLIP" : "OK")), wMeas, r2d(gyroBias));
+  snprintf(b, sizeof b, "YAW %+8.1f gyro %s w %+.2f drift %+.2f/s", r2d(pose.yaw), !cfg::USE_GYRO ? "OFF(ENC)" : gyroCal ? "CAL" : (gyroFault ? "FAULT>ENC" : (gyroSignFix < 0 ? "SIGN FLIP" : "OK")), wMeas, r2d(gyroBias));
   uiText(4, y, C_BG, gyroFault ? C_RED : color::white, fontType::mono15, b); y += 14;
   snprintf(b, sizeof b, "X %.0f Y %.0f  trip %.1fm  v %.0f", pose.x, pose.y, tripMm / 1000.0, vMeas);
   uiText(4, y, C_BG, color::white, fontType::mono15, b); y += 14;
