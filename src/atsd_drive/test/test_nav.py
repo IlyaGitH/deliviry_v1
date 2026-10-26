@@ -21,5 +21,5 @@ def test_hold_pauses_drop_goal_but_obstacle_does_not():
 def test_find_point():
     pts = [{'id': 'kpp', 'x': 2.0, 'y': 0.0}]
     assert find_point(pts, 'kpp')['x'] == 2.0
-    assert find_point(pts, 'home') == {'id': 'home', 'x': 0.0, 'y': 0.0}
+    assert find_point(pts, 'home') is None
     assert find_point(pts, 'nope') is None

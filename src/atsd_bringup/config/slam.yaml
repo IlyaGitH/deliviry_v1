@@ -16,7 +16,7 @@ slam_toolbox:
     mode: localization
 
     map_file_name: /opt/atsd/maps/map   # подставляет nav.launch.py (аргумент map)
-    map_start_at_dock: true             # старт в начале карты; иначе задать /initialpose
+    map_start_at_dock: true             # старт там, где начинали съёмку карты (не в 0,0)
 
     debug_logging: false
     throttle_scans: 1
