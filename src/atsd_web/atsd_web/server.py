@@ -10,7 +10,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -222,7 +222,11 @@ def order_view(order, tele):
 
 @app.get('/')
 def index():
-    return FileResponse(str(STATIC / 'index.html'))
+    # Метка версии в ссылках: после обновления браузер не возьмёт старые app.js и style.css из кэша
+    html = (STATIC / 'index.html').read_text(encoding='utf-8')
+    for name in ('app.js', 'style.css'):
+        html = html.replace(f'/static/{name}"', f'/static/{name}?v={int((STATIC / name).stat().st_mtime)}"')
+    return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/api/config')
