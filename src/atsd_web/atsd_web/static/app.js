@@ -175,7 +175,19 @@ function draw() {
   const pts = localPoints || CFG.points;
   const targetId = LAST && LAST.order ? LAST.order.target : null;
 
-  if (LAST && targetId) {
+  // Настоящий путь Nav2 (топик /plan), пока робот едет; без него — прямая до цели
+  const plan = LAST && LAST.telemetry.plan;
+  const moving = LAST && LAST.order && ['TO_PICKUP', 'TO_DROP', 'RETURN'].includes(LAST.order.brain_state);
+  if (moving && plan && plan.length > 1) {
+    ctx.strokeStyle = '#4b9dff';
+    ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    plan.forEach(([px, py], i) => {
+      const [sx, sy] = toScreen(v, px, py);
+      if (i) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
+    });
+    ctx.stroke();
+  } else if (LAST && targetId) {
     const t = pts.find(p => p.id === targetId);
     if (t) {
       const [ax, ay] = toScreen(v, LAST.telemetry.pose.x, LAST.telemetry.pose.y);

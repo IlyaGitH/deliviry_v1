@@ -6,6 +6,8 @@ import threading
 import time
 from collections import deque
 
+TRAVEL = ('TO_PICKUP', 'TO_DROP', 'RETURN')
+
 DEFAULT = {
     'connected': False,
     'brain_link': False,
@@ -21,6 +23,7 @@ DEFAULT = {
     'estop': False,
     'mission': None,
     'obstacle': '',
+    'plan': [],
     'ble': {'zone': None, 'rssi': None, 'near': False, 'zones': {}},
 }
 
@@ -69,7 +72,7 @@ class RosLink:
         import rclpy
         from rclpy.node import Node
         from geometry_msgs.msg import PoseWithCovarianceStamped
-        from nav_msgs.msg import Odometry
+        from nav_msgs.msg import Odometry, Path
         from sensor_msgs.msg import BatteryState, NavSatFix, NavSatStatus
         from std_msgs.msg import Bool, Empty, String
         from std_srvs.srv import Trigger
@@ -124,6 +127,20 @@ class RosLink:
             except ValueError:
                 return
             self._set(['mission'], data)
+            if data.get('state') not in TRAVEL:
+                self._set(['plan'], [])
+
+        def on_plan(msg: Path):
+            # Путь Nav2 в кадре map; точки через ~10 см — для рисования хватает
+            out = []
+            for ps in msg.poses:
+                p = (round(ps.pose.position.x, 2), round(ps.pose.position.y, 2))
+                if not out or math.hypot(p[0] - out[-1][0], p[1] - out[-1][1]) >= 0.1:
+                    out.append(p)
+            if msg.poses:
+                last = msg.poses[-1].pose.position
+                out.append((round(last.x, 2), round(last.y, 2)))
+            self._set(['plan'], out)
 
         sub = node.create_subscription
         sub(Odometry, '/drive/odom', on_odom, 10)
@@ -139,6 +156,7 @@ class RosLink:
         sub(String, '/mission/state', on_mission, 10)
         sub(String, '/mission/event', lambda m: self._event(m.data), 50)
         sub(String, '/perception/obstacle_info', lambda m: self._set(['obstacle'], m.data), 5)
+        sub(Path, '/plan', on_plan, 1)
 
         def on_zone(msg: String):
             parts = msg.data.split()
@@ -233,6 +251,7 @@ class RosLink:
                 self._state['pose'] = {'x': x, 'y': y, 'yaw': yaw}
                 self._state['speed'] = 0.55 if st['state'] in ('TO_PICKUP', 'TO_DROP') else 0.0
                 self._state['mission'] = dict(st)
+                self._state['plan'] = [(x, y), tuple(target)] if target is not None else []
                 near_pt = min(pts.items(), key=lambda kv: math.hypot(kv[1][0] - x, kv[1][1] - y)) if pts else None
                 if near_pt:
                     d = math.hypot(near_pt[1][0] - x, near_pt[1][1] - y)

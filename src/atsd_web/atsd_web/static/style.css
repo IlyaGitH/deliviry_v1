@@ -82,6 +82,7 @@ body{
 .dot.rover{background:var(--accent)}
 .dot.point{background:#7e8ea0}
 .dot.target{background:var(--route)}
+.line.route{display:inline-block;width:16px;height:3px;border-radius:2px;background:var(--route);vertical-align:middle}
 #coord{margin-left:auto}
 
 .status{padding:14px}
