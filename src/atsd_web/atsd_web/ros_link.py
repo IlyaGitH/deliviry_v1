@@ -346,7 +346,7 @@ class RosLink:
                 self._state['road'] = {'gnss': 'ok', 'mode': 'lane' if speed else 'idle', 'lane': 2,
                                        'yaw_known': True, 'ready': True, 'pose': [x, y, yaw],
                                        'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5}
-                self._state['gnss_status'] = f'sats=9/14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
+                self._state['gnss_status'] = f'sats=9/14 snr=38дБx14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
                 self._state['lane'] = '0.050 -0.0100 3.50 2' if speed else 'none'
             if tick % 2 == 0:
                 jpg = _mock_frame(tick, speed)

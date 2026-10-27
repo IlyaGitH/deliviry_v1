@@ -25,6 +25,17 @@ GGA_QUALITY = {
     5: NavSatStatus.STATUS_GBAS_FIX,
 }
 
+FIX_NAME = {1: 'нет', 2: '2D', 3: '3D'}  # поле GSA: 1 — решения нет
+
+
+def snr_summary(gsv):
+    """Медиана уровня сигнала и сколько спутников его дают: «41дБx17».
+    Под открытым небом 30–48 и разброс; много спутников с ровным ~40 и без фикса —
+    похоже на ретранслятор или подмену, все ниже 20 — экранировано или глушат."""
+    snr = sorted(s for _, lst in gsv.values() for s in lst)
+    return f'{snr[len(snr) // 2]}дБx{len(snr)}' if snr else '-'
+
+
 NMEA_ID = {'GGA': 0x00, 'GLL': 0x01, 'GSA': 0x02,
            'GSV': 0x03, 'RMC': 0x04, 'VTG': 0x05, 'ZDA': 0x08}
 
@@ -73,6 +84,7 @@ class GnssNode(Node):
 
         self.sats_used = 0
         self.sats_view = 0
+        self.gsv = {}  # система (GP, GL, GA, GB) -> [в поле зрения, уровни сигнала дБ]
         self.hdop = 99.9
         self.vdop = 99.9
         self.quality = 0
@@ -219,10 +231,20 @@ class GnssNode(Node):
         elif t == 'RMC':
             self._on_rmc(msg)
         elif t == 'GSV':
-            try:
-                self.sats_view = int(msg.num_sv_in_view)
-            except (TypeError, ValueError, AttributeError):
-                pass
+            self._on_gsv(msg)
+
+    def _on_gsv(self, msg):
+        # каждая система шлёт свои GSV: считаем по отдельности, иначе ГЛОНАСС затирает GPS
+        try:
+            if int(msg.msg_num) == 1:
+                self.gsv[msg.talker] = [int(msg.num_sv_in_view), []]
+            for i in range(1, 5):
+                snr = getattr(msg, f'snr_{i}', '')
+                if snr:
+                    self.gsv[msg.talker][1].append(int(snr))
+        except (TypeError, ValueError, AttributeError, KeyError):
+            return
+        self.sats_view = sum(v[0] for v in self.gsv.values())
 
     def _on_gsa(self, msg):
         for attr, setter in (('hdop', 'hdop'), ('vdop', 'vdop')):
@@ -276,8 +298,8 @@ class GnssNode(Node):
         self._publish_fix(has_fix, msg if has_fix else None)
 
         self.pub_status.publish(String(data=(
-            f'sats={self.sats_used}/{self.sats_view} hdop={self.hdop:.1f} '
-            f'qual={self.quality} fix={self.fix_type}D v={self.speed_ms:.1f}')))
+            f'sats={self.sats_used}/{self.sats_view} snr={snr_summary(self.gsv)} hdop={self.hdop:.1f} '
+            f'qual={self.quality} fix={FIX_NAME.get(self.fix_type, "?")} v={self.speed_ms:.1f}')))
 
     def _publish_fix(self, has_fix: bool, msg=None):
         fix = NavSatFix()
