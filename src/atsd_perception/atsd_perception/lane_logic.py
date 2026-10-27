@@ -28,6 +28,7 @@ class LaneCfg:
     follow: str = 'center'    # center — середина полосы; right/left — держаться у линии
     keep_m: float = 0.6       # для right/left: на сколько от линии держать центр робота
     iters: int = 80
+    clutter_max: float = 0.25  # «краской» оказалось больше этой доли вида сверху — не дорога (окна, жалюзи, плитка)
 
 
 class BirdView:
@@ -68,7 +69,7 @@ def marking_points(bgr, bird: BirdView):
     valid = cv2.erode(valid, np.ones((1, k), np.uint8))
     rows, cols = np.nonzero((hat > cfg.thresh) & (valid > 0))
     gx, gy = bird.to_ground(cols.astype(np.float32), rows.astype(np.float32))
-    return np.stack([gx, gy], axis=1)
+    return np.stack([gx, gy], axis=1), len(rows) / max(1, np.count_nonzero(valid))
 
 
 def fit_lines(pts, cfg: LaneCfg, rng=None):
@@ -150,7 +151,9 @@ def detect_lane(bgr, bird: BirdView, rng=None, debug=None):
     debug — словарь, куда положить найденные точки краски (для отладочной картинки)."""
     if cv2 is None or bgr is None or bgr.size == 0:
         return None
-    pts = marking_points(bgr, bird)
+    pts, clutter = marking_points(bgr, bird)
     if debug is not None:
-        debug['pts'] = pts
+        debug['pts'], debug['clutter'] = pts, clutter
+    if clutter > bird.cfg.clutter_max:
+        return None  # на дороге краска — пара узких полос; когда «полос» всюду, прямые случайны
     return lane_from_lines(fit_lines(pts, bird.cfg, rng), bird.cfg)

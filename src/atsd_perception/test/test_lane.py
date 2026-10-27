@@ -89,3 +89,14 @@ def test_wide_bright_patch_is_not_a_line():
     pts = [ground_to_pixel(x, y, CAM) for x, y in ((2.0, 1.0), (2.0, -1.0), (3.5, -1.0), (3.5, 1.0))]
     cv2.fillPoly(img, [np.array(pts, np.int32)], (230, 230, 230))  # белая машина/лужа 2 × 1.5 м
     assert detect_lane(img, BIRD) is None
+
+
+def test_many_stripes_is_not_a_road():
+    # жалюзи, плитка, окна: светлых полос всюду — прямая через них случайна
+    img = road([(i * 0.3, 0.0, 0.12, WHITE, None) for i in range(-10, 11)])
+    assert detect_lane(img, BIRD) is None
+
+
+def test_wide_three_line_road_passes_clutter_gate():
+    lane = detect_lane(road([(y, 0.0, 0.2, WHITE, None) for y in (1.75, 0.0, -1.75)]), BIRD)
+    assert lane is not None

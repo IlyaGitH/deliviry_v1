@@ -67,6 +67,7 @@ class VisionNode(Node):
         d('lane_keep_m', 0.6)
         d('lane_x_max_m', 6.0)
         d('lane_thresh', 35)
+        d('lane_clutter_max', 0.25)
 
         p = lambda n: self.get_parameter(n).value
         self.P = {n: p(n) for n in ('device', 'width', 'height', 'fps', 'model_path', 'backend', 'threads',
@@ -106,7 +107,8 @@ class VisionNode(Node):
         if bool(p('lane_enabled')) and CV_OK:
             self.bird = BirdView(self.cam, LaneCfg(
                 lane_width=float(p('lane_width_m')), follow=str(p('lane_follow')),
-                keep_m=float(p('lane_keep_m')), x_max=float(p('lane_x_max_m')), thresh=int(p('lane_thresh'))))
+                keep_m=float(p('lane_keep_m')), x_max=float(p('lane_x_max_m')), thresh=int(p('lane_thresh')),
+                clutter_max=float(p('lane_clutter_max'))))
         self.pub_dbg = self.create_publisher(CompressedImage, 'perception/debug/compressed', 2)
 
         self.frame = None
@@ -282,7 +284,8 @@ class VisionNode(Node):
             self.ground_line(img, ln['offset'], np.tan(ln['angle']), (0, 220, 120), 3)
             text = f'lane {ln["lines"]}  off {ln["offset"]:+.2f} m  ang {np.degrees(ln["angle"]):+.1f} deg  w {ln["width"]:.1f} m'
         else:
-            text = 'lane: none'
+            clutter = self.lane_dbg.get('clutter', 0.0)
+            text = f'lane: none  (clutter {clutter:.0%})' if clutter > self.bird.cfg.clutter_max else 'lane: none'
         cv2.rectangle(img, (0, 0), (img.shape[1], 22), (0, 0, 0), -1)
         cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         # врезка: вид сверху 6 x 6 м, белые точки — найденная краска, робот внизу по центру

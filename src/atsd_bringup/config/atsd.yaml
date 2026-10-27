@@ -139,6 +139,7 @@ vision_node:
     lane_keep_m: 0.6
     lane_x_max_m: 6.0
     lane_thresh: 35          # насколько линия ярче асфальта; слабая краска — меньше
+    lane_clutter_max: 0.25   # доля «краски» на виде сверху, выше — не дорога (окна, плитка, зебра)
 
 ble_node:
   ros__parameters:

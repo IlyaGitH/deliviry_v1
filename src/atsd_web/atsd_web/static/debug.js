@@ -86,7 +86,7 @@ function chips(t) {
   out.push(chip('режим ' + (r.mode || '—')));
   out.push(chip(`${(t.speed || 0).toFixed(2)} м/с`));
   if (t.state) out.push(chip('рейс ' + t.state + (t.pause && t.pause.length ? ' (пауза: ' + t.pause.join(', ') + ')' : '')));
-  if (t.obstacle) out.push(chip('препятствие ' + t.obstacle, 'bad'));
+  if (t.obstacle) out.push(chip(t.obstacle, /свобод/.test(t.obstacle) ? 'ok' : 'bad'));
   if (!t.brain_link) out.push(chip('нет связи с Brain', 'bad'));
   $('chips').innerHTML = out.join('');
 }
