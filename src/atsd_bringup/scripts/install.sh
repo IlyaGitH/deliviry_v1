@@ -131,10 +131,6 @@ http://packages.ros.org/ros2/ubuntu ${UBUNTU_CODENAME} main" \
   fi
 fi
 
-if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
-  apt_install ros-${ROS_DISTRO_NAME}-navigation2 ros-${ROS_DISTRO_NAME}-slam-toolbox
-fi
-
 log "Python-зависимости"
 # --ignore-installed: свежему pydantic нужен typing_extensions новее, чем в apt, а удалить пакет
 # из apt pip не может. Ставим зависимости в /usr/local рядом, системные не трогаем
@@ -255,6 +251,7 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
 
   for f in atsd_drive/lib/atsd_drive/v5_bridge_node \
            atsd_drive/lib/atsd_drive/nav_node \
+           atsd_drive/lib/atsd_drive/road_mark \
            atsd_actuators/lib/atsd_actuators/light_node \
            atsd_actuators/lib/atsd_actuators/lock_node \
            atsd_sensors/lib/atsd_sensors/lidar_node \

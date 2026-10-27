@@ -3,13 +3,16 @@ import json
 import threading
 import time
 
+import numpy as np
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
+from atsd_perception.lane_logic import BirdView, LaneCfg, detect_lane
 from atsd_perception.vision_logic import (CameraGeom, Confirm, LightHsv, SpotCfg, classify_light,
-                                         distance_from_height, find_red_spot)
+                                         distance_from_height, find_red_spot, ground_to_pixel)
 
 try:
     import cv2
@@ -58,6 +61,12 @@ class VisionNode(Node):
         d('spot_min_area_m2', 0.02)
         d('spot_max_area_m2', 2.5)
         d('spot_max_range_m', 3.5)
+        d('lane_enabled', True)
+        d('lane_width_m', 3.5)
+        d('lane_follow', 'center')
+        d('lane_keep_m', 0.6)
+        d('lane_x_max_m', 6.0)
+        d('lane_thresh', 35)
 
         p = lambda n: self.get_parameter(n).value
         self.P = {n: p(n) for n in ('device', 'width', 'height', 'fps', 'model_path', 'backend', 'threads',
@@ -90,6 +99,13 @@ class VisionNode(Node):
                                 max_area_m2=float(p('spot_max_area_m2')),
                                 max_range_m=float(p('spot_max_range_m')))
         self.last_spot = None
+        self.pub_lane = self.create_publisher(String, 'perception/lane', 10)
+        self.bird = None
+        self.last_lane = None
+        if bool(p('lane_enabled')) and CV_OK:
+            self.bird = BirdView(self.cam, LaneCfg(
+                lane_width=float(p('lane_width_m')), follow=str(p('lane_follow')),
+                keep_m=float(p('lane_keep_m')), x_max=float(p('lane_x_max_m')), thresh=int(p('lane_thresh'))))
         self.pub_dbg = self.create_publisher(CompressedImage, 'perception/debug/compressed', 2)
 
         self.frame = None
@@ -180,6 +196,12 @@ class VisionNode(Node):
             time.sleep(max(0.0, period - (time.monotonic() - t0)))
 
     def process(self, frame):
+        if self.bird is not None:
+            lane = detect_lane(frame, self.bird)
+            self.last_lane = lane
+            self.pub_lane.publish(String(data=(
+                f'{lane["offset"]:.3f} {lane["angle"]:.4f} {lane["width"]:.2f} {lane["lines"]}'
+                if lane else 'none')))
         if self.spot_enabled:
             spot = find_red_spot(frame, self.cam, self.spot_cfg)
             self.last_spot = spot
@@ -253,6 +275,12 @@ class VisionNode(Node):
             cv2.rectangle(img, (x1, y1), (x2, y2), c, 2)
             label = f'{d["cls"]} {d["conf"]:.2f} {d.get("dist", 0):.1f}m {d.get("color") or ""}'
             cv2.putText(img, label, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, c, 1)
+        if self.last_lane:  # куда держать центр робота: точки на 1–5 м вперёд
+            ln = self.last_lane
+            pts = [ground_to_pixel(x, ln['offset'] + np.tan(ln['angle']) * x, self.cam) for x in (1, 2, 3, 4, 5)]
+            pts = [tuple(int(c) for c in q) for q in pts if q is not None]
+            for a, b in zip(pts, pts[1:]):
+                cv2.line(img, a, b, (0, 220, 120), 3)
         if self.last_spot:
             x1, y1, x2, y2 = self.last_spot['box']
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 2)

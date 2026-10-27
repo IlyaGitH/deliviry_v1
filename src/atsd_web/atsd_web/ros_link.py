@@ -24,6 +24,7 @@ DEFAULT = {
     'mission': None,
     'obstacle': '',
     'plan': [],
+    'road': {},
     'ble': {'zone': None, 'rssi': None, 'near': False, 'zones': {}},
 }
 
@@ -131,7 +132,7 @@ class RosLink:
                 self._set(['plan'], [])
 
         def on_plan(msg: Path):
-            # Путь Nav2 в кадре map; точки через ~10 см — для рисования хватает
+            # Маршрут в кадре map; точки через ~10 см — для рисования хватает
             out = []
             for ps in msg.poses:
                 p = (round(ps.pose.position.x, 2), round(ps.pose.position.y, 2))
@@ -157,6 +158,14 @@ class RosLink:
         sub(String, '/mission/event', lambda m: self._event(m.data), 50)
         sub(String, '/perception/obstacle_info', lambda m: self._set(['obstacle'], m.data), 5)
         sub(Path, '/plan', on_plan, 1)
+
+        def on_road(msg: String):
+            try:
+                self._set(['road'], json.loads(msg.data))
+            except ValueError:
+                pass
+
+        sub(String, '/road/status', on_road, 5)
 
         def on_zone(msg: String):
             parts = msg.data.split()

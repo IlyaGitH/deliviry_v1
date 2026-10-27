@@ -1,5 +1,5 @@
 [Unit]
-Description=ATSD | Навигация по лидарной карте: slam_toolbox + Nav2
+Description=ATSD | Езда по дороге: разметка, GPS, колёса
 After=network-online.target atsd-sensors.service atsd-drive.service
 PartOf=atsd.target
 

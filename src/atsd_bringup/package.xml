@@ -12,8 +12,5 @@
   <exec_depend>atsd_web</exec_depend>
   <exec_depend>v4l2_camera</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>slam_toolbox</exec_depend>
-  <exec_depend>navigation2</exec_depend>
-  <exec_depend>nav2_common</exec_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

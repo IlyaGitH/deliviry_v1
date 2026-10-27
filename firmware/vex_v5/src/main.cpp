@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.3"
+#define FW_VERSION "3.0.4"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -87,9 +87,9 @@ const double   LIGHT_STOP_OFFSET_MM = 450.0;
 const double   OBST_SLOW_MM        = 1800.0;
 const double   OBST_STOP_MM        = 450.0;
 const uint32_t OBST_MSG_TIMEOUT_MS = 400;
-// Упёрлись вплотную дольше этого — отъезжаем назад на REC_BACK_MM: Nav2 сам назад не едет,
-// а у стены считает робота уже в столкновении и не даёт даже развернуться
-const uint32_t OBST_BACKOFF_MS     = 3000;
+// Упёрлись вплотную дольше этого — отъезжаем назад на REC_BACK_MM. 0 — не отъезжать, ждать:
+// на дороге препятствие (человек, машина) уходит само, а объезжать по разметке некуда
+const uint32_t OBST_BACKOFF_MS     = 0;
 
 const uint32_t LINK_TIMEOUT_MS   = 500;
 const uint32_t V_WATCHDOG_MS     = 300;
@@ -696,7 +696,7 @@ static void travelTick(double& v, double& w) {
 
   if (!obstBlock) obstWait.blockSince = 0;
   else if (!obstWait.blockSince) obstWait.blockSince = now ? now : 1;
-  else if (!pauseMask && now - obstWait.blockSince > cfg::OBST_BACKOFF_MS) {
+  else if (cfg::OBST_BACKOFF_MS && !pauseMask && now - obstWait.blockSince > cfg::OBST_BACKOFF_MS) {
     obstWait.blockSince = 0;
     startRecovery("OBSTACLE");
     return;

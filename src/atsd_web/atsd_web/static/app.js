@@ -122,6 +122,7 @@ function view() {
   const pts = (localPoints || CFG.points);
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
   if (LAST) { xs.push(LAST.telemetry.pose.x); ys.push(LAST.telemetry.pose.y); }
+  Object.values((CFG.roads || {}).nodes || {}).forEach(([x, y]) => { xs.push(x); ys.push(y); });
   if (!xs.length) { xs.push(0); ys.push(0); }
 
   const pad = 6;
@@ -171,6 +172,17 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
     }
   }
+
+  // граф дорог (roads.json): по нему строится маршрут
+  const roads = CFG.roads || { nodes: {}, edges: [] };
+  ctx.strokeStyle = 'rgba(232,238,242,.28)';
+  ctx.lineWidth = 6; ctx.lineCap = 'round';
+  roads.edges.forEach(([a, b]) => {
+    const na = roads.nodes[a], nb = roads.nodes[b];
+    if (!na || !nb) return;
+    const [ax, ay] = toScreen(v, na[0], na[1]), [bx, by] = toScreen(v, nb[0], nb[1]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  });
 
   const pts = localPoints || CFG.points;
   const targetId = LAST && LAST.order ? LAST.order.target : null;
@@ -296,7 +308,10 @@ function render(msg) {
     : 'BLE: меток нет';
   $('chipZone').classList.toggle('ok', !!ble.near);
   renderEvents(msg.events);
-  $('coord').textContent =
+  const r = t.road || {};
+  const gnss = { ok: 'GPS ок', suspect: 'GPS не верю (глушение?)', none: 'GPS нет' }[r.gnss] || '';
+  const lane = r.lane ? `разметка ${r.lane === 2 ? '2 линии' : '1 линия'}` : 'разметки нет';
+  $('coord').textContent = `${gnss} · ${lane} · ` +
     `x ${t.pose.x.toFixed(1)}  y ${t.pose.y.toFixed(1)}`.replace(/\./g, ',');
 
   updateActions(o);

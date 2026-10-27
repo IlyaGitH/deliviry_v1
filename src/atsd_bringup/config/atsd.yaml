@@ -26,7 +26,14 @@ v5_bridge:
 nav_node:
   ros__parameters:
     points_file: /opt/atsd/data/points.json  # точки в метрах карты, правятся в веб-интерфейсе
+    roads_file: /opt/atsd/data/roads.json    # граф дорог и origin GPS, снимается road_mark
     map_frame: map
+    odom_frame: odom
+    v_max: 0.5
+    arrive_m: 0.3              # до точки вдоль дороги, м
+    lane_timeout_s: 0.5
+    gnss_timeout_s: 2.0
+    no_position_timeout_s: 20.0
 
 light_node:
   ros__parameters:
@@ -126,6 +133,12 @@ vision_node:
     spot_min_area_m2: 0.02
     spot_max_area_m2: 2.5
     spot_max_range_m: 3.5
+    lane_enabled: true
+    lane_width_m: 3.5        # ширина полосы, если видна одна линия
+    lane_follow: center      # center — середина полосы; right — у правой линии на lane_keep_m
+    lane_keep_m: 0.6
+    lane_x_max_m: 6.0
+    lane_thresh: 35          # насколько линия ярче асфальта; слабая краска — меньше
 
 ble_node:
   ros__parameters:

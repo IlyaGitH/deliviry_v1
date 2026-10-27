@@ -19,8 +19,8 @@ from atsd_web.ros_link import RosLink
 DATA_DIR = Path(os.environ.get('ATSD_DATA', '/opt/atsd/data'))
 POINTS_FILE = DATA_DIR / 'points.json'
 ORDERS_FILE = DATA_DIR / 'orders.json'
-MAP_YAML = Path(os.environ.get('ATSD_MAPS', '/opt/atsd/maps')) / 'indoor.yaml'
-MAP_PNG = DATA_DIR / 'map.png'
+MAPS_DIR = Path(os.environ.get('ATSD_MAPS', '/opt/atsd/maps'))
+ROADS_FILE = DATA_DIR / 'roads.json'
 
 DEFAULT_POINTS = [
     {'id': 'kpp',     'name': 'КПП',               'x': 2.0,  'y': 0.0, 'indoor': True},
@@ -39,19 +39,22 @@ DEFAULT_MAPS = {
 _store_lock = threading.Lock()
 
 
-def robot_map():
-    """Карта из map_saver (indoor.yaml + .pgm) как подложка; PGM браузер не покажет — переводим в PNG."""
+def robot_map(kind):
+    """Подложка из /opt/atsd/maps/<kind>.yaml (формат map_saver: image, resolution, origin).
+    indoor — карта лидара, outdoor — спутниковый снимок; PGM браузер не покажет — переводим в PNG."""
     try:
         import cv2
         import yaml
-        meta = yaml.safe_load(MAP_YAML.read_text())
-        src = MAP_YAML.parent / meta['image']
+        meta_file = MAPS_DIR / f'{kind}.yaml'
+        meta = yaml.safe_load(meta_file.read_text())
+        src = meta_file.parent / meta['image']
+        png = DATA_DIR / f'{kind}.png'
         mtime = int(src.stat().st_mtime)
-        if not MAP_PNG.exists() or MAP_PNG.stat().st_mtime < mtime:
+        if not png.exists() or png.stat().st_mtime < mtime:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(MAP_PNG), cv2.imread(str(src), cv2.IMREAD_GRAYSCALE))
-        return {'image': f'/api/map.png?v={mtime}', 'meters_per_pixel': float(meta['resolution']),
-                'origin': [float(v) for v in meta['origin'][:2]], 'label': 'Карта робота'}
+            cv2.imwrite(str(png), cv2.imread(str(src), cv2.IMREAD_COLOR))
+        return {'image': f'/api/map/{kind}.png?v={mtime}', 'meters_per_pixel': float(meta['resolution']),
+                'origin': [float(v) for v in meta['origin'][:2]], 'label': DEFAULT_MAPS[kind]['label']}
     except Exception:
         return None
 
@@ -231,16 +234,18 @@ def index():
 
 @app.get('/api/config')
 def api_config():
-    maps = dict(DEFAULT_MAPS)
-    maps['indoor'] = robot_map() or maps['indoor']
-    return {'points': points(), 'maps': maps}
+    maps = {k: robot_map(k) or v for k, v in DEFAULT_MAPS.items()}
+    roads = _load(ROADS_FILE, {})
+    return {'points': points(), 'maps': maps,
+            'roads': {'nodes': roads.get('nodes', {}), 'edges': roads.get('edges', [])}}
 
 
-@app.get('/api/map.png')
-def api_map_png():
-    if not MAP_PNG.exists():
+@app.get('/api/map/{kind}.png')
+def api_map_png(kind: str):
+    png = DATA_DIR / f'{kind}.png'
+    if kind not in DEFAULT_MAPS or not png.exists():
         raise HTTPException(404, 'Карты нет')
-    return FileResponse(str(MAP_PNG), media_type='image/png')
+    return FileResponse(str(png), media_type='image/png')
 
 
 @app.post('/api/points')
