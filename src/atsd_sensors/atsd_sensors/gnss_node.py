@@ -68,6 +68,7 @@ class GnssNode(Node):
         self.pub_vel = self.create_publisher(TwistWithCovarianceStamped,
                                              'gnss/vel', 10)
         self.pub_status = self.create_publisher(String, 'gnss/status', 5)
+        self.pub_nmea = self.create_publisher(String, 'gnss/nmea', 50)  # сырые строки для отладочной консоли
         self.pub_diag = self.create_publisher(DiagnosticArray, '/diagnostics', 5)
 
         self.sats_used = 0
@@ -199,6 +200,8 @@ class GnssNode(Node):
             if not raw:
                 continue
             line = raw.decode('ascii', 'ignore').strip()
+            if line:
+                self.pub_nmea.publish(String(data=line))
             if line.startswith('$'):
                 self._parse(line)
 

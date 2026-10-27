@@ -422,6 +422,7 @@ def main(args=None):
     global link
     mock = os.environ.get('ATSD_MOCK', '').lower() in ('1', 'true', 'yes')
     port = int(os.environ.get('ATSD_PORT', '8080'))
+    debug_port = int(os.environ.get('ATSD_DEBUG_PORT', '8090'))
     try:
         import rclpy
         from rclpy.node import Node
@@ -429,8 +430,10 @@ def main(args=None):
         cfg = Node('web_config')
         cfg.declare_parameter('mock', mock)
         cfg.declare_parameter('port', port)
+        cfg.declare_parameter('debug_port', debug_port)
         mock = bool(cfg.get_parameter('mock').value)
         port = int(cfg.get_parameter('port').value)
+        debug_port = int(cfg.get_parameter('debug_port').value)
         cfg.destroy_node()
     except Exception:
         pass
@@ -440,6 +443,13 @@ def main(args=None):
     link = RosLink(mock=mock, logger=print)
     link.start()
     print(f'АТСД-1М · веб-интерфейс на порту {port}{" · режим имитации" if mock else ""}')
+    if debug_port:
+        # отдельный сервер в своём потоке: сигналы остановки ловит основной, этот уходит вместе с процессом
+        from atsd_web.debug import attach, debug_app
+        attach(link, STATIC, api_config)
+        threading.Thread(target=uvicorn.run, args=(debug_app,), daemon=True,
+                         kwargs={'host': '0.0.0.0', 'port': debug_port, 'log_level': 'warning'}).start()
+        print(f'Отладочная страница: порт {debug_port}')
     uvicorn.run(app, host='0.0.0.0', port=port, log_level='warning')
 
 

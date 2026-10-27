@@ -140,12 +140,17 @@ def lane_from_lines(lines, cfg: LaneCfg):
     else:
         a = left[0] - width / 2 if left else right[0] + width / 2
     return {'offset': a, 'angle': float(np.arctan(b)), 'width': float(width),
-            'lines': int(bool(left)) + int(bool(right))}
+            'lines': int(bool(left)) + int(bool(right)),
+            'left': left[:2] if left else None, 'right': right[:2] if right else None}
 
 
-def detect_lane(bgr, bird: BirdView, rng=None):
+def detect_lane(bgr, bird: BirdView, rng=None, debug=None):
     """Кадр -> {'offset': м (+ — цель левее робота), 'angle': рад (+ — полоса уходит влево),
-    'width': м, 'lines': 1|2} или None, если разметки не видно."""
+    'width': м, 'lines': 1|2, 'left'/'right': (a, b) краёв} или None, если разметки не видно.
+    debug — словарь, куда положить найденные точки краски (для отладочной картинки)."""
     if cv2 is None or bgr is None or bgr.size == 0:
         return None
-    return lane_from_lines(fit_lines(marking_points(bgr, bird), bird.cfg, rng), bird.cfg)
+    pts = marking_points(bgr, bird)
+    if debug is not None:
+        debug['pts'] = pts
+    return lane_from_lines(fit_lines(pts, bird.cfg, rng), bird.cfg)

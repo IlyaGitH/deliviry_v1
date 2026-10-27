@@ -102,6 +102,7 @@ class VisionNode(Node):
         self.pub_lane = self.create_publisher(String, 'perception/lane', 10)
         self.bird = None
         self.last_lane = None
+        self.lane_dbg = {}
         if bool(p('lane_enabled')) and CV_OK:
             self.bird = BirdView(self.cam, LaneCfg(
                 lane_width=float(p('lane_width_m')), follow=str(p('lane_follow')),
@@ -197,7 +198,8 @@ class VisionNode(Node):
 
     def process(self, frame):
         if self.bird is not None:
-            lane = detect_lane(frame, self.bird)
+            self.lane_dbg = {}
+            lane = detect_lane(frame, self.bird, debug=self.lane_dbg)
             self.last_lane = lane
             self.pub_lane.publish(String(data=(
                 f'{lane["offset"]:.3f} {lane["angle"]:.4f} {lane["width"]:.2f} {lane["lines"]}'
@@ -262,6 +264,42 @@ class VisionNode(Node):
                 [{k: v for k, v in d.items() if k not in ('box', 'cls_id')} for d in dets], ensure_ascii=False)))
         self.publish_debug(frame, dets)
 
+    def ground_line(self, img, a, b, color, width):
+        pts = [ground_to_pixel(x, a + b * x, self.cam) for x in np.linspace(1.0, self.bird.cfg.x_max, 8)]
+        pts = [tuple(int(c) for c in q) for q in pts if q is not None]
+        for p, q in zip(pts, pts[1:]):
+            cv2.line(img, p, q, color, width)
+
+    def draw_lane(self, img):
+        """Края полосы (оранжевые), куда держать центр (зелёная), вид сверху с краской (врезка)."""
+        if self.bird is None:
+            return
+        ln = self.last_lane
+        if ln:
+            for edge in (ln['left'], ln['right']):
+                if edge:
+                    self.ground_line(img, edge[0], edge[1], (0, 140, 255), 2)
+            self.ground_line(img, ln['offset'], np.tan(ln['angle']), (0, 220, 120), 3)
+            text = f'lane {ln["lines"]}  off {ln["offset"]:+.2f} m  ang {np.degrees(ln["angle"]):+.1f} deg  w {ln["width"]:.1f} m'
+        else:
+            text = 'lane: none'
+        cv2.rectangle(img, (0, 0), (img.shape[1], 22), (0, 0, 0), -1)
+        cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # врезка: вид сверху 6 x 6 м, белые точки — найденная краска, робот внизу по центру
+        cfg, size = self.bird.cfg, 150
+        inset = np.full((size, size, 3), 30, np.uint8)
+        pts = self.lane_dbg.get('pts')
+        if pts is not None and len(pts):
+            k = size / (2 * cfg.y_max)
+            u = (size / 2 - pts[:, 1] * k).astype(int)
+            v = (size - (pts[:, 0] - 0) * k).astype(int)
+            ok = (u >= 0) & (u < size) & (v >= 0) & (v < size)
+            inset[v[ok], u[ok]] = (255, 255, 255)
+        cv2.circle(inset, (size // 2, size - 3), 4, (0, 220, 120), -1)
+        h, w = img.shape[:2]
+        img[26:26 + size, w - size - 4:w - 4] = inset
+        cv2.rectangle(img, (w - size - 4, 26), (w - 4, 26 + size), (200, 200, 200), 1)
+
     def publish_debug(self, frame, dets):
         now = time.monotonic()
         if now - self.last_debug < self.debug_period or self.pub_dbg.get_subscription_count() == 0:
@@ -275,12 +313,7 @@ class VisionNode(Node):
             cv2.rectangle(img, (x1, y1), (x2, y2), c, 2)
             label = f'{d["cls"]} {d["conf"]:.2f} {d.get("dist", 0):.1f}m {d.get("color") or ""}'
             cv2.putText(img, label, (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, c, 1)
-        if self.last_lane:  # куда держать центр робота: точки на 1–5 м вперёд
-            ln = self.last_lane
-            pts = [ground_to_pixel(x, ln['offset'] + np.tan(ln['angle']) * x, self.cam) for x in (1, 2, 3, 4, 5)]
-            pts = [tuple(int(c) for c in q) for q in pts if q is not None]
-            for a, b in zip(pts, pts[1:]):
-                cv2.line(img, a, b, (0, 220, 120), 3)
+        self.draw_lane(img)
         if self.last_spot:
             x1, y1, x2, y2 = self.last_spot['box']
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 2)

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>АТСД-1М · отладка</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body{padding:12px;max-width:1500px;margin:0 auto}
+  h1{font:600 18px var(--sans);margin:0 0 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px}
+  @media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px;min-width:0}
+  .card h2{font:600 13px var(--sans);color:var(--ink-2);margin:0 0 8px;text-transform:uppercase;letter-spacing:.06em}
+  .cam{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3}
+  .cam img{width:100%;height:100%;object-fit:contain;display:block}
+  .cam .off{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink-2);text-align:center;padding:16px}
+  canvas{width:100%;height:420px;display:block;background:var(--panel-2);border-radius:10px;touch-action:none}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+  .chip{font:12px var(--mono);padding:3px 8px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line)}
+  .chip.ok{border-color:var(--accent);color:var(--accent)}
+  .chip.warn{border-color:var(--warn);color:var(--warn)}
+  .chip.bad{border-color:var(--danger);color:var(--danger)}
+  .legend{font:12px var(--sans);color:var(--ink-2);display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+  .tools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;font-size:13px}
+  .tools button{background:var(--panel-2);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer}
+  .tools label{display:flex;align-items:center;gap:4px;color:var(--ink-2)}
+  #con{font:12px/1.4 var(--mono);height:300px;overflow:auto;background:#05090b;border-radius:10px;padding:8px;white-space:pre-wrap;word-break:break-all}
+  #con .nmea{color:#7f95a3}
+  #con .event{color:var(--accent)}
+  #con .state{color:var(--ink)}
+  #con .alarm{color:var(--danger)}
+  .full{grid-column:1/-1}
+</style>
+</head>
+<body>
+<h1>АТСД-1М · отладка <span id="link" class="chip">нет связи</span></h1>
+<div class="grid">
+  <div class="card">
+    <h2>Камера: что распознал робот</h2>
+    <div class="cam">
+      <img id="cam" alt="кадр с камеры">
+      <div id="camoff" class="off">Нет кадров с камеры.<br>Проверьте atsd-perception и debug_image_hz.</div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <div class="card">
+    <h2>Карта: GPS и оценка положения</h2>
+    <canvas id="dmap"></canvas>
+    <div class="legend">
+      <span><i style="background:#e0a33a"></i>сырой GPS (кружок — точность)</span>
+      <span><i style="background:#37c8a4"></i>оценка (GPS + колёса + разметка)</span>
+      <span><i style="background:#4b9dff"></i>маршрут</span>
+      <span><i style="background:#56656f"></i>дороги</span>
+    </div>
+  </div>
+  <div class="card full">
+    <h2>Консоль GPS</h2>
+    <div class="tools">
+      <label><input type="checkbox" id="nmea" checked> NMEA</label>
+      <label><input type="checkbox" id="auto" checked> прокрутка</label>
+      <button id="pause">Пауза</button>
+      <button id="clear">Очистить</button>
+    </div>
+    <div id="con"></div>
+  </div>
+</div>
+<script src="/static/debug.js"></script>
+</body>
+</html>

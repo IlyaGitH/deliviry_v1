@@ -79,6 +79,7 @@ class NavNode(Node):
         self.w_odom = 0.0
         self.lane, self.lane_t = None, 0.0
         self.fix_t = 0.0
+        self.fix_xy, self.fix_sigma = None, None
         self.last_plan_pub = 0.0
         self.get_logger().info(f'Езда по дороге: граф {self.roads_file}, точки {self.points_file}')
 
@@ -118,6 +119,7 @@ class NavNode(Node):
         before = self.nav.filter.gnss
         state = self.nav.filter.gnss_fix(x, y, max(sigma, 1.0))
         self.fix_t = time.monotonic()
+        self.fix_xy, self.fix_sigma = (round(x, 2), round(y, 2)), round(sigma, 1)
         if state != before and state == 'suspect':
             self.event('GNSS_SUSPECT')
             self.get_logger().warn('GPS прыгнул или не сходится с колёсами — не верю ему, еду по колёсам и разметке')
@@ -254,7 +256,11 @@ class NavNode(Node):
         self.pub_status.publish(String(data=json.dumps({
             'gnss': f.gnss, 'mode': self.nav.follower.mode if self.nav.active else 'idle',
             'lane': self.lane['lines'] if lane_on and self.lane else 0,
-            'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready)})))
+            'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready),
+            # для отладочной страницы: оценка и сырой GPS в метрах карты
+            'pose': [round(float(v), 3) for v in f.X] if f.ready else None,
+            'fix': self.fix_xy if time.monotonic() - self.fix_t < self.gnss_timeout else None,
+            'sigma': self.fix_sigma})))
 
 
 def main(args=None):

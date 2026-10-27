@@ -2,6 +2,7 @@
 import copy
 import json
 import math
+import random
 import threading
 import time
 from collections import deque
@@ -25,8 +26,49 @@ DEFAULT = {
     'obstacle': '',
     'plan': [],
     'road': {},
+    'gnss_status': '',
+    'lane': '',
     'ble': {'zone': None, 'rssi': None, 'near': False, 'zones': {}},
 }
+
+
+def _nmea(body):
+    cs = 0
+    for ch in body:
+        cs ^= ord(ch)
+    return f'${body}*{cs:02X}'
+
+
+def _mock_frame(tick, speed):
+    """Кадр для режима имитации: дорога с двумя линиями, как рисует vision_node."""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    img = np.full((240, 320, 3), 70, np.uint8)
+    img[:110] = (150, 120, 90)
+    sway = int(12 * math.sin(tick / 10))
+    for x0, x1 in ((60, 140), (260, 180)):
+        cv2.line(img, (x0 + sway, 239), (x1 + sway, 110), (230, 230, 230), 3)
+        cv2.line(img, (x0 + sway, 239), (x1 + sway, 110), (0, 140, 255), 2)
+    cv2.line(img, (160 + sway, 239), (160 + sway, 110), (0, 255, 0), 2)
+    cv2.putText(img, f'MOCK lane 2 v {speed:.2f}', (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    ok, buf = cv2.imencode('.jpg', img)
+    return buf.tobytes() if ok else None
+
+
+def _mock_nmea(x, y, yaw, speed):
+    """Имитация строк BN-880 для отладочной консоли: позиция вокруг Тольятти."""
+    lat = 53.5078 + y / 111320.0
+    lon = 49.4204 + x / (111320.0 * math.cos(math.radians(53.5078)))
+    t = time.strftime('%H%M%S.00', time.gmtime())
+    la = f'{int(lat):02d}{(lat % 1) * 60:07.4f}'
+    lo = f'{int(lon):03d}{(lon % 1) * 60:07.4f}'
+    course = (90 - math.degrees(yaw)) % 360
+    return [_nmea(f'GNGGA,{t},{la},N,{lo},E,1,09,1.1,92.4,M,14.2,M,,'),
+            _nmea(f'GNRMC,{t},A,{la},N,{lo},E,{speed / 0.514444:.2f},{course:.1f},'
+                  f'{time.strftime("%d%m%y", time.gmtime())},,,A')]
 
 
 class RosLink:
@@ -42,6 +84,9 @@ class RosLink:
         self._stop = threading.Event()
         self._node = None
         self._mock_cmd = deque()
+        self._console = deque(maxlen=600)   # отладочная консоль: NMEA, события
+        self._console_seq = 0
+        self._jpeg, self._jpeg_seq, self._jpeg_t = None, 0, 0.0
 
     def snapshot(self):
         with self._lock:
@@ -60,6 +105,25 @@ class RosLink:
         with self._lock:
             self._event_seq += 1
             self._events.append({'seq': self._event_seq, 'ts': time.time(), 'text': text})
+        self._log(text, 'event')
+
+    def _log(self, text, kind):
+        with self._lock:
+            self._console_seq += 1
+            self._console.append({'seq': self._console_seq, 'ts': time.time(), 'kind': kind, 'text': text})
+
+    def console_since(self, seq):
+        with self._lock:
+            return [c for c in self._console if c['seq'] > seq][-200:]
+
+    def frame(self):
+        """Последний кадр с отрисовкой распознанного: (номер, jpeg, возраст в с)."""
+        with self._lock:
+            return self._jpeg_seq, self._jpeg, time.time() - self._jpeg_t
+
+    def _on_jpeg(self, data):
+        with self._lock:
+            self._jpeg, self._jpeg_seq, self._jpeg_t = bytes(data), self._jpeg_seq + 1, time.time()
 
     def start(self):
         target = self._run_mock if self.mock else self._run_ros
@@ -74,7 +138,7 @@ class RosLink:
         from rclpy.node import Node
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from nav_msgs.msg import Odometry, Path
-        from sensor_msgs.msg import BatteryState, NavSatFix, NavSatStatus
+        from sensor_msgs.msg import BatteryState, CompressedImage, NavSatFix, NavSatStatus
         from std_msgs.msg import Bool, Empty, String
         from std_srvs.srv import Trigger
         from tf2_ros import Buffer, TransformException, TransformListener
@@ -166,6 +230,10 @@ class RosLink:
                 pass
 
         sub(String, '/road/status', on_road, 5)
+        sub(CompressedImage, '/perception/debug/compressed', lambda m: self._on_jpeg(m.data), 2)
+        sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
+        sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
+        sub(String, '/perception/lane', lambda m: self._set(['lane'], m.data), 5)
 
         def on_zone(msg: String):
             parts = msg.data.split()
@@ -210,6 +278,7 @@ class RosLink:
               'remain_m': 0.0, 'mission_s': 0.0, 'link': True}
         target, t0, drive, comp = None, None, 92.0, 88.0
         pts = {}
+        tick = 0
         with self._lock:
             self._state['connected'] = True
             self._state['brain_link'] = True
@@ -270,6 +339,22 @@ class RosLink:
                                                    'percent': round(drive)}
                 self._state['battery']['compute'] = {'volts': round(3.2 + comp / 100, 2),
                                                      'percent': round(comp)}
+            tick += 1
+            speed = 0.55 if st['state'] in ('TO_PICKUP', 'TO_DROP') else 0.0
+            fx, fy = x + random.gauss(0, 0.8), y + random.gauss(0, 0.8)
+            with self._lock:
+                self._state['road'] = {'gnss': 'ok', 'mode': 'lane' if speed else 'idle', 'lane': 2,
+                                       'yaw_known': True, 'ready': True, 'pose': [x, y, yaw],
+                                       'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5}
+                self._state['gnss_status'] = f'sats=9/14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
+                self._state['lane'] = '0.050 -0.0100 3.50 2' if speed else 'none'
+            if tick % 2 == 0:
+                jpg = _mock_frame(tick, speed)
+                if jpg:
+                    self._on_jpeg(jpg)
+            if tick % 5 == 0:
+                for line in _mock_nmea(fx, fy, yaw, speed):
+                    self._log(line, 'nmea')
             time.sleep(0.2)
 
     def start_mission(self, from_id, to_id, points=None):

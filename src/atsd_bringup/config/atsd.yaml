@@ -120,7 +120,7 @@ vision_node:
     light_confirm: 3
     max_sign_distance_m: 6.0
     light_lost_s: 2.0
-    debug_image_hz: 2.0
+    debug_image_hz: 8.0      # кадр с отрисовкой для отладочной страницы :8090
     hsv_s_min: 90
     hsv_v_min: 140
     spot_enabled: true
