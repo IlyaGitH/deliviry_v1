@@ -164,6 +164,7 @@ gnss_node:
     save_config: true
     fix_timeout_s: 3.0
     uere_m: 2.5
+    gnss_systems: ''         # '' — как сохранено в приёмнике; GLONASS,BEIDOU — без GPS (глушат/подменяют GPS)
 
 battery_node:
   ros__parameters:

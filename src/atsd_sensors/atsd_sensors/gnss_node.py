@@ -12,7 +12,10 @@ import pynmea2
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from std_msgs.msg import String
+
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+
+from atsd_sensors.gnss_logic import FIX_NAME, MAJOR, cfg_gnss_payload, snr_summary
 
 
 KNOTS_TO_MS = 0.514444
@@ -24,17 +27,6 @@ GGA_QUALITY = {
     4: NavSatStatus.STATUS_GBAS_FIX,
     5: NavSatStatus.STATUS_GBAS_FIX,
 }
-
-FIX_NAME = {1: 'нет', 2: '2D', 3: '3D'}  # поле GSA: 1 — решения нет
-
-
-def snr_summary(gsv):
-    """Медиана уровня сигнала и сколько спутников его дают: «41дБx17».
-    Под открытым небом 30–48 и разброс; много спутников с ровным ~40 и без фикса —
-    похоже на ретранслятор или подмену, все ниже 20 — экранировано или глушат."""
-    snr = sorted(s for _, lst in gsv.values() for s in lst)
-    return f'{snr[len(snr) // 2]}дБx{len(snr)}' if snr else '-'
-
 
 NMEA_ID = {'GGA': 0x00, 'GLL': 0x01, 'GSA': 0x02,
            'GSV': 0x03, 'RMC': 0x04, 'VTG': 0x05, 'ZDA': 0x08}
@@ -63,6 +55,8 @@ class GnssNode(Node):
         self.declare_parameter('save_config', True)
         self.declare_parameter('fix_timeout_s', 3.0)
         self.declare_parameter('uere_m', 2.5)
+        # '' — не трогать настройку приёмника; например GLONASS,BEIDOU — слушать без GPS
+        self.declare_parameter('gnss_systems', '')
 
         p = self.get_parameter
         self.port = p('port').value
@@ -74,6 +68,12 @@ class GnssNode(Node):
         self.save_cfg = bool(p('save_config').value)
         self.fix_timeout = float(p('fix_timeout_s').value)
         self.uere = float(p('uere_m').value)
+        self.systems = [x.strip().upper() for x in str(p('gnss_systems').value).split(',') if x.strip()]
+        bad = [x for x in self.systems if x not in MAJOR]
+        if bad or sum(x in MAJOR for x in self.systems) > 3:
+            self.get_logger().error(f'gnss_systems: {self.systems} — можно до трёх из {", ".join(MAJOR)}; '
+                                    'настройку систем не меняю')
+            self.systems = []
 
         self.pub_fix = self.create_publisher(NavSatFix, 'gnss/fix', 10)
         self.pub_vel = self.create_publisher(TwistWithCovarianceStamped,
@@ -154,6 +154,12 @@ class GnssNode(Node):
                            ('VTG', 0), ('GLL', 0), ('GSV', 5)):
             self.ser.write(ubx(0x06, 0x01, bytes([0xF0, NMEA_ID[name], rate])))
             time.sleep(0.02)
+
+        if self.systems:
+            # приёмник перезапустит слежение: фикс пропадёт на 30–60 с
+            self.ser.write(ubx(0x06, 0x3E, cfg_gnss_payload(self.systems)))
+            self.get_logger().info(f'Слушаю системы: {", ".join(self.systems)}')
+            time.sleep(0.3)
 
         meas_ms = max(100, int(round(1000.0 / max(self.nav_rate, 0.5))))
         self.ser.write(ubx(0x06, 0x08,
@@ -237,13 +243,15 @@ class GnssNode(Node):
         # каждая система шлёт свои GSV: считаем по отдельности, иначе ГЛОНАСС затирает GPS
         try:
             if int(msg.msg_num) == 1:
-                self.gsv[msg.talker] = [int(msg.num_sv_in_view), []]
+                self.gsv[msg.talker] = [int(msg.num_sv_in_view), [], time.monotonic()]
             for i in range(1, 5):
                 snr = getattr(msg, f'snr_{i}', '')
                 if snr:
                     self.gsv[msg.talker][1].append(int(snr))
         except (TypeError, ValueError, AttributeError, KeyError):
             return
+        # систему, которую выключили или перестали слышать, через 5 с не считаем
+        self.gsv = {k: v for k, v in self.gsv.items() if time.monotonic() - v[2] < 5.0}
         self.sats_view = sum(v[0] for v in self.gsv.values())
 
     def _on_gsa(self, msg):
