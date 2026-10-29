@@ -279,6 +279,8 @@ install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/syste
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/udev/99-atsd.rules" /etc/udev/rules.d/
 install -m 644 "${WS_DIR}/src/atsd_bringup/polkit/50-atsd-wifi-scan.rules" /etc/polkit-1/rules.d/
+install -m 440 "${WS_DIR}/src/atsd_bringup/sudoers/atsd-wifi-scan" /etc/sudoers.d/atsd-wifi-scan
+visudo -cf /etc/sudoers.d/atsd-wifi-scan >/dev/null || { rm -f /etc/sudoers.d/atsd-wifi-scan; warn "sudoers для сканирования Wi-Fi не принят"; }
 
 mkdir -p /etc/atsd
 install -m 644 "${WS_DIR}/src/atsd_bringup/config/atsd-ros.sh"  /etc/profile.d/atsd-ros.sh

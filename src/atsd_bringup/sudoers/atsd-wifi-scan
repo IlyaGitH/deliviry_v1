@@ -1,0 +1,2 @@
+# wifi_node: полное сканирование Wi-Fi драйвером (NetworkManager показывает не все точки)
+atsd ALL=(root) NOPASSWD: /usr/sbin/iw dev wlan0 scan

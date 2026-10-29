@@ -55,10 +55,15 @@ class WifiNode(Node):
             r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=20)
         found = parse_nmcli(r.stdout) if r.returncode == 0 else []
         try:  # драйвер слышит больше, чем показывает NetworkManager
-            d = subprocess.run(['iw', 'dev', self.iface, 'scan', 'dump'], capture_output=True, text=True, timeout=10)
+            # полное сканирование — от root (правило в /etc/sudoers.d/atsd-wifi-scan), иначе кэш драйвера
+            d = subprocess.run(['sudo', '-n', '/usr/sbin/iw', 'dev', self.iface, 'scan'],
+                               capture_output=True, text=True, timeout=15)
+            if d.returncode != 0:
+                d = subprocess.run(['iw', 'dev', self.iface, 'scan', 'dump'], capture_output=True, text=True,
+                                   timeout=10)
             found += parse_iw(d.stdout) if d.returncode == 0 else []
         except FileNotFoundError:
-            pass  # iw не установлен
+            pass  # iw или sudo не установлены
         return found, err
 
     def locate(self, aps):
