@@ -159,6 +159,7 @@ wifi_node:
     period_s: 20.0           # раз во сколько секунд спрашивать место по Wi-Fi (нужен интернет)
     key_file: /etc/atsd/locator.key   # ключ Яндекс Локатора; нет файла — бесплатный beaconDB
     min_aps: 2
+    yandex_api: yandex       # yandex — api.lbs.yandex.net (ключ «API Локатора» работает здесь); yandex_v1 — новая версия
     daily_limit: 90          # запросов к Яндексу в день (бесплатно 100); дальше — beaconDB
     budget_file: /opt/atsd/data/locator_budget.json
 

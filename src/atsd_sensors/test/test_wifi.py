@@ -20,14 +20,29 @@ def test_parse_and_filter():
 
 
 def test_requests():
+    import urllib.parse
     aps = [('74:4d:28:cd:6a:10', -64.0)]
-    assert json.loads(request_body('yandex', aps)) == {'wifi': [{'bssid': '74:4d:28:cd:6a:10', 'signal_strength': -64}]}
-    assert json.loads(request_body('beacondb', aps))['wifiAccessPoints'][0]['macAddress'] == '74:4d:28:cd:6a:10'
+    body, ctype = request_body('yandex', aps, 'KEY')
+    data = json.loads(urllib.parse.parse_qs(body)['json'][0])
+    assert ctype == 'application/x-www-form-urlencoded'
+    assert data == {'common': {'version': '1.0', 'api_key': 'KEY'},
+                    'wifi_networks': [{'mac': '74-4D-28-CD-6A-10', 'signal_strength': -64}]}
+    body, _ = request_body('yandex_v1', aps)
+    assert json.loads(body) == {'wifi': [{'bssid': '74:4d:28:cd:6a:10', 'signal_strength': -64}]}
+    body, _ = request_body('beacondb', aps)
+    assert json.loads(body)['wifiAccessPoints'][0]['macAddress'] == '74:4d:28:cd:6a:10'
 
 
 def test_responses():
-    assert parse_response('yandex', {'location': {'point': {'lat': 53.5, 'lon': 49.4}, 'accuracy': 40}}) == (53.5, 49.4, 40.0)
-    assert parse_response('yandex', {}) is None
+    # ответ api.lbs.yandex.net с площадки
+    lbs = {'position': {'latitude': 52.90113830566406, 'longitude': 35.98632431030273, 'altitude': 0.0,
+                        'precision': 26.19580078125, 'altitude_precision': 30.0, 'type': 'wifi'}}
+    assert parse_response('yandex', lbs) == (52.90113830566406, 35.98632431030273, 26.19580078125)
+    lbs['position']['type'] = 'ip'
+    assert parse_response('yandex', lbs) is None
+    assert parse_response('yandex', {'error': {'code': 2}}) is None
+    assert parse_response('yandex_v1', {'location': {'point': {'lat': 53.5, 'lon': 49.4}, 'accuracy': 40}}) == (53.5, 49.4, 40.0)
+    assert parse_response('yandex_v1', {}) is None
     assert parse_response('beacondb', {'location': {'lat': 53.5, 'lng': 49.4}, 'accuracy': 25.0}) == (53.5, 49.4, 25.0)
     assert parse_response('beacondb', {'location': {'lat': 53.5, 'lng': 49.4}, 'accuracy': 5000.0, 'fallback': 'ipf'}) is None
 

@@ -26,6 +26,7 @@ class WifiNode(Node):
         d('period_s', 20.0)
         d('key_file', '/etc/atsd/locator.key')
         d('min_aps', 2)
+        d('yandex_api', 'yandex')  # yandex — api.lbs.yandex.net, yandex_v1 — новая версия Локатора
         d('daily_limit', 90)  # у Яндекса бесплатно 100 в день; кончились — спрашиваем beaconDB
         d('budget_file', '/opt/atsd/data/locator_budget.json')
         p = lambda n: self.get_parameter(n).value
@@ -35,7 +36,8 @@ class WifiNode(Node):
                 self.key = f.read().strip()
         except OSError:
             self.key = ''
-        self.provider = 'yandex' if self.key else 'beacondb'
+        self.yandex = str(p('yandex_api'))
+        self.provider = self.yandex if self.key else 'beacondb'
         self.budget = Budget(p('budget_file'), int(p('daily_limit')))
         self.last = None  # (точки, место или None) прошлого запроса
         self.yandex_off = 0.0  # до какого времени Яндекс не спрашиваем (ключ отклонён, лимит)
@@ -80,9 +82,9 @@ class WifiNode(Node):
         return found, err
 
     def locate(self, provider, aps):
-        req = urllib.request.Request(URL[provider].format(key=self.key),
-                                     data=request_body(provider, aps).encode(), method='POST',
-                                     headers={'Content-Type': 'application/json',
+        body, ctype = request_body(provider, aps, self.key)
+        req = urllib.request.Request(URL[provider].format(key=self.key), data=body.encode(), method='POST',
+                                     headers={'Content-Type': ctype,
                                               'User-Agent': 'atsd-1m/1.0 (delivery robot)'})
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -107,12 +109,12 @@ class WifiNode(Node):
                     pos, provider, note = self.last[1], self.last[2], ' (те же сети — без запроса)'
                 else:
                     yandex = self.key and time.monotonic() > self.yandex_off
-                    provider = 'yandex' if yandex and self.budget.take() else 'beacondb'
+                    provider = self.yandex if yandex and self.budget.take() else 'beacondb'
                     pos, note = self.locate(provider, aps[:20]), ''
                     self.last = (nets, pos, provider)
             except (OSError, subprocess.SubprocessError, ValueError) as e:
                 msg = f'{e.__class__.__name__}: {e}'
-                if provider == 'yandex' and getattr(e, 'code', None) in (403, 429):
+                if provider == self.yandex and getattr(e, 'code', None) in (403, 429):
                     self.yandex_off = time.monotonic() + 600  # не жжём дневной лимит повторами
                     msg += ' — Яндекс не спрашиваю 10 мин'
                 self.status(f'нет ответа ({msg})'[:200], provider)

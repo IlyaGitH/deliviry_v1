@@ -3,8 +3,12 @@
 import datetime
 import json
 import re
+import urllib.parse
 
-URL = {'yandex': 'https://locator.api.maps.yandex.ru/v1/locate?apikey={key}',
+# yandex — Локатор api.lbs.yandex.net (ключи «API Локатора» из кабинета работают здесь),
+# yandex_v1 — новая версия; ей ключ из кабинета отвечал 403
+URL = {'yandex': 'https://api.lbs.yandex.net/geolocation',
+       'yandex_v1': 'https://locator.api.maps.yandex.ru/v1/locate?apikey={key}',
        'beacondb': 'https://api.beacondb.net/v1/geolocate'}
 
 
@@ -55,18 +59,28 @@ def usable(aps):
     return [(b, s / 2 - 100) for b, s in sorted(best.items(), key=lambda kv: -kv[1])]  # % -> дБм
 
 
-def request_body(provider, aps):
+def request_body(provider, aps, key=''):
+    """-> (тело запроса, Content-Type)."""
     if provider == 'yandex':
-        return json.dumps({'wifi': [{'bssid': b, 'signal_strength': round(d)} for b, d in aps]})
-    return json.dumps({'considerIp': False,
-                       'wifiAccessPoints': [{'macAddress': b, 'signalStrength': round(d)} for b, d in aps]})
+        data = {'common': {'version': '1.0', 'api_key': key},
+                'wifi_networks': [{'mac': b.replace(':', '-').upper(), 'signal_strength': round(d)} for b, d in aps]}
+        return urllib.parse.urlencode({'json': json.dumps(data)}), 'application/x-www-form-urlencoded'
+    if provider == 'yandex_v1':
+        return json.dumps({'wifi': [{'bssid': b, 'signal_strength': round(d)} for b, d in aps]}), 'application/json'
+    return json.dumps({'considerIp': False, 'wifiAccessPoints': [
+        {'macAddress': b, 'signalStrength': round(d)} for b, d in aps]}), 'application/json'
 
 
 def parse_response(provider, data):
     """Ответ сервиса -> (широта, долгота, точность м) или None, если место не найдено."""
     try:
-        loc = data['location']
         if provider == 'yandex':
+            pos = data['position']
+            if pos.get('type') == 'ip':
+                return None  # по IP — это город, не нужно
+            return float(pos['latitude']), float(pos['longitude']), float(pos['precision'])
+        loc = data['location']
+        if provider == 'yandex_v1':
             return float(loc['point']['lat']), float(loc['point']['lon']), float(loc['accuracy'])
         if data.get('fallback'):
             return None  # по IP или соте — это километры, не нужно
