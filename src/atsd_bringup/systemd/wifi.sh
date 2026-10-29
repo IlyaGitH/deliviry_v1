@@ -12,6 +12,7 @@ AP_ADDR=10.42.0.1/24
 WAIT_S=60
 STABLE_S=30     # связь считается, только если продержалась столько подряд
 MIN_SIGNAL=25   # % сигнала известной сети; слабее — как будто её нет
+RETRY_S=180     # в режиме точки, если к ней никто не подключён, — раз в столько ищем известные сети
 POLL_S=5
 CONF=${ATSD_WIFI_CONF:-/etc/atsd/wifi.conf}
 [[ -f ${CONF} ]] && . "${CONF}"
@@ -44,14 +45,23 @@ nmcli radio wifi on
 echo "Ищу известные сети на ${IFACE}, своя точка «${AP_SSID}» через ${WAIT_S} с без связи"
 since=$(date +%s)
 ok_since=0
+ap_since=$(date +%s)
 was=
 while true; do
   now=$(date +%s)
   if [[ $(dev_conn) == "${AP}" ]]; then
-    # ponytail: из режима точки обратно не уходим — в AP-режиме brcmfmac не сканирует.
-    # Вернуться в известную сеть: перезагрузка или  sudo nmcli con up <сеть>
     since=${now}
     state=ap
+    # в режиме точки модуль Pi не сканирует: чтобы найти сеть, появившуюся позже (раздачу
+    # телефона), точку ненадолго гасим — только если к ней никто не подключён
+    if (( now - ap_since >= RETRY_S )) && command -v iw >/dev/null &&
+       [[ -z $(iw dev "${IFACE}" station dump 2>/dev/null) ]]; then
+      echo "К точке никто не подключён — на ${WAIT_S} с ищу известные сети"
+      nmcli con down "${AP}" >/dev/null 2>&1
+      nmcli dev set "${IFACE}" autoconnect yes >/dev/null 2>&1  # после dev disconnect NM сам не подключался бы
+      ap_since=${now}
+      state=retry
+    fi
   elif link_ok; then
     (( ok_since )) || ok_since=${now}
     # на краю зоны сеть то ловится, то нет: короткие подключения таймер не сбрасывают
@@ -66,6 +76,7 @@ while true; do
       if start_ap; then
         echo "Точка доступа поднята: веб-интерфейс http://${AP_ADDR%/*}:8080"
         state=ap
+        ap_since=$(date +%s)
       else
         echo "Точку доступа поднять не удалось, повтор через ${WAIT_S} с"
         nmcli dev set "${IFACE}" autoconnect yes >/dev/null 2>&1  # пусть снова ищет известные сети
