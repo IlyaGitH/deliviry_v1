@@ -53,24 +53,30 @@ class WifiNode(Node):
             self.last_text = text
 
     def scan(self):
-        cmd = ['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface]
-        r = subprocess.run(cmd + ['--rescan', 'yes'], capture_output=True, text=True, timeout=20)
-        err = ''
-        if r.returncode != 0:
-            # не дали сканировать (нет правила polkit) или режим точки доступа — берём кэш
-            err = (r.stderr.strip().splitlines() or ['?'])[-1][:80]
-            r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=20)
-        found = parse_nmcli(r.stdout) if r.returncode == 0 else []
-        try:  # драйвер слышит больше, чем показывает NetworkManager
-            # полное сканирование — от root (правило в /etc/sudoers.d/atsd-wifi-scan), иначе кэш драйвера
+        """Точки вокруг и почему список мог быть неполным ('' — всё хорошо)."""
+        # полное сканирование драйвером, от root по правилу /etc/sudoers.d/atsd-wifi-scan;
+        # на Pi обходит все каналы 2,4 и 5 ГГц — бывает дольше 15 с
+        try:
             d = subprocess.run(['sudo', '-n', '/usr/sbin/iw', 'dev', self.iface, 'scan'],
-                               capture_output=True, text=True, timeout=15)
-            if d.returncode != 0:
-                d = subprocess.run(['iw', 'dev', self.iface, 'scan', 'dump'], capture_output=True, text=True,
-                                   timeout=10)
-            found += parse_iw(d.stdout) if d.returncode == 0 else []
+                               capture_output=True, text=True, timeout=40)
+            if d.returncode == 0:
+                return parse_iw(d.stdout), ''
+            err = (d.stderr.strip().splitlines() or ['?'])[-1][:80]
+        except subprocess.TimeoutExpired:
+            err = 'iw scan дольше 40 с'
         except FileNotFoundError:
-            pass  # iw или sudo не установлены
+            err = 'нет iw или sudo'
+        # запасной путь: NetworkManager (в режиме точки доступа — только его кэш) и кэш драйвера
+        cmd = ['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface]
+        r = subprocess.run(cmd + ['--rescan', 'yes'], capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=10)
+        found = parse_nmcli(r.stdout) if r.returncode == 0 else []
+        try:
+            d = subprocess.run(['iw', 'dev', self.iface, 'scan', 'dump'], capture_output=True, text=True, timeout=10)
+            found += parse_iw(d.stdout) if d.returncode == 0 else []
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
         return found, err
 
     def locate(self, provider, aps):
@@ -93,7 +99,7 @@ class WifiNode(Node):
                 found, err = self.scan()
                 aps = usable(found)
                 if len(aps) < self.min_aps:
-                    why = f'; сканировать не дали: {err} — старый список' if err else ''
+                    why = f'; полного сканирования нет: {err}' if err else ''
                     self.status(f'видно {len(aps)} точек (всего {len(found)}) — мало{why}')
                     continue
                 nets = frozenset(b for b, _ in aps[:20])
