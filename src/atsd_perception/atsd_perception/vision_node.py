@@ -286,6 +286,20 @@ class VisionNode(Node):
         else:
             clutter = self.lane_dbg.get('clutter', 0.0)
             text = f'lane: none  (clutter {clutter:.0%})' if clutter > self.bird.cfg.clutter_max else 'lane: none'
+        # для калибровки наклона: горизонт по настройке должен лечь туда, где сходятся прямые пола
+        # (коридор, края дороги); метки 1, 2, 4 м — совпасть с рулеткой на полу
+        h, w = img.shape[:2]
+        vh = int(round(self.cam.cy - self.cam.focal_px * np.tan(self.cam.pitch_rad)))
+        if 0 <= vh < h:
+            cv2.line(img, (0, vh), (w, vh), (255, 255, 0), 1)
+            cv2.putText(img, f'horizon (pitch {np.degrees(self.cam.pitch_rad):.0f} deg)', (6, max(34, vh - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+        for dist in (1.0, 2.0, 4.0):
+            a, b = ground_to_pixel(dist, 0.5, self.cam), ground_to_pixel(dist, -0.5, self.cam)
+            if a is not None and b is not None:
+                p, q = (int(a[0]), int(a[1])), (int(b[0]), int(b[1]))
+                cv2.line(img, p, q, (255, 255, 0), 1)
+                cv2.putText(img, f'{dist:.0f} m', (q[0] + 4, q[1] + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
         cv2.rectangle(img, (0, 0), (img.shape[1], 22), (0, 0, 0), -1)
         cv2.putText(img, text, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         # врезка: вид сверху 6 x 6 м, белые точки — найденная краска, робот внизу по центру
