@@ -84,7 +84,7 @@ apt_install curl gnupg ca-certificates lsb-release rsync \
             python3-pip python3-venv \
             python3-serial python3-gpiozero python3-lgpio \
             python3-numpy python3-opencv v4l-utils \
-            bluez rfkill \
+            bluez rfkill iw \
             i2c-tools
 
 log "Отключаю ModemManager"
