@@ -153,6 +153,13 @@ ble_node:
     rate_hz: 2.0
     adapter: hci0
 
+wifi_node:
+  ros__parameters:
+    iface: wlan0
+    period_s: 20.0           # раз во сколько секунд спрашивать место по Wi-Fi (нужен интернет)
+    key_file: /etc/atsd/locator.key   # ключ Яндекс Локатора; нет файла — бесплатный beaconDB
+    min_aps: 2
+
 gnss_node:
   ros__parameters:
     port: /dev/gnss

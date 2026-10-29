@@ -233,6 +233,7 @@ class RosLink:
         sub(CompressedImage, '/perception/debug/compressed', lambda m: self._on_jpeg(m.data), 2)
         sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
         sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
+        sub(String, '/wifi/status', lambda m: self._log(m.data, 'wifi'), 5)
         sub(String, '/perception/lane', lambda m: self._set(['lane'], m.data), 5)
 
         def on_zone(msg: String):
@@ -345,7 +346,8 @@ class RosLink:
             with self._lock:
                 self._state['road'] = {'gnss': 'ok', 'mode': 'lane' if speed else 'idle', 'lane': 2,
                                        'yaw_known': True, 'ready': True, 'pose': [x, y, yaw],
-                                       'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5}
+                                       'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5,
+                                       'wifi': [round(x + 6, 1), round(y - 4, 1), 25.0]}
                 self._state['gnss_status'] = f'sats=9/14 snr=38дБx14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
                 self._state['lane'] = '0.050 -0.0100 3.50 2' if speed else 'none'
             if tick % 2 == 0:

@@ -69,6 +69,7 @@ class NavNode(Node):
         self.create_subscription(TwistWithCovarianceStamped, 'gnss/vel', self.on_vel, 10)
         self.create_subscription(String, 'perception/lane', self.on_lane, 10)
         self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.on_initialpose, 5)
+        self.create_subscription(NavSatFix, 'wifi/fix', self.on_wifi, 5)
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.publish_status)
 
@@ -80,6 +81,7 @@ class NavNode(Node):
         self.lane, self.lane_t = None, 0.0
         self.fix_t = 0.0
         self.fix_xy, self.fix_sigma = None, None
+        self.wifi, self.wifi_t = None, 0.0  # (x, y, точность) по Wi-Fi, свежая 2 мин
         self.last_plan_pub = 0.0
         self.get_logger().info(f'Езда по дороге: граф {self.roads_file}, точки {self.points_file}')
 
@@ -117,7 +119,8 @@ class NavNode(Node):
         x, y = to_local(msg.latitude, msg.longitude, self.origin)
         sigma = math.sqrt(msg.position_covariance[0]) if msg.position_covariance[0] > 0 else 2.5
         before = self.nav.filter.gnss
-        state = self.nav.filter.gnss_fix(x, y, max(sigma, 1.0))
+        wifi = self.wifi if time.monotonic() - self.wifi_t < 120.0 else None
+        state = self.nav.filter.gnss_fix(x, y, max(sigma, 1.0), wifi)
         self.fix_t = time.monotonic()
         self.fix_xy, self.fix_sigma = (round(x, 2), round(y, 2)), round(sigma, 1)
         if state != before and state == 'suspect':
@@ -125,6 +128,13 @@ class NavNode(Node):
             self.get_logger().warn('GPS прыгнул или не сходится с колёсами — не верю ему, еду по колёсам и разметке')
         elif state != before and state == 'ok' and before == 'suspect':
             self.event('GNSS_OK')
+
+    def on_wifi(self, msg: NavSatFix):
+        if self.origin is None:
+            return
+        x, y = to_local(msg.latitude, msg.longitude, self.origin)
+        self.wifi = (x, y, math.sqrt(max(msg.position_covariance[0], 1.0)))
+        self.wifi_t = time.monotonic()
 
     def on_vel(self, msg: TwistWithCovarianceStamped):
         ve, vn = msg.twist.twist.linear.x, msg.twist.twist.linear.y
@@ -260,7 +270,8 @@ class NavNode(Node):
             # для отладочной страницы: оценка и сырой GPS в метрах карты
             'pose': [round(float(v), 3) for v in f.X] if f.ready else None,
             'fix': self.fix_xy if time.monotonic() - self.fix_t < self.gnss_timeout else None,
-            'sigma': self.fix_sigma})))
+            'sigma': self.fix_sigma,
+            'wifi': [round(v, 1) for v in self.wifi] if time.monotonic() - self.wifi_t < 120.0 else None})))
 
 
 def main(args=None):

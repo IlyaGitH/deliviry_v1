@@ -37,8 +37,9 @@ function summary(t) {
   const r = t.road || {};
   const f = r.fix ? `GPS ${r.fix[0].toFixed(1)}, ${r.fix[1].toFixed(1)} σ${r.sigma ?? '?'}м` : 'GPS —';
   const p = r.pose ? `оценка ${r.pose[0].toFixed(1)}, ${r.pose[1].toFixed(1)} курс ${(r.pose[2] * 180 / Math.PI).toFixed(0)}°` : 'оценки нет';
+  const w = r.wifi ? ` | Wi-Fi ${r.wifi[0].toFixed(0)}, ${r.wifi[1].toFixed(0)} ±${r.wifi[2].toFixed(0)}м` : '';
   const d = r.fix && r.pose ? ` расхождение ${Math.hypot(r.fix[0] - r.pose[0], r.fix[1] - r.pose[1]).toFixed(1)}м` : '';
-  return `[${r.gnss || '?'}] ${f} | ${p}${d} | ${t.gnss_status || ''}`;
+  return `[${r.gnss || '?'}] ${f} | ${p}${d}${w} | ${t.gnss_status || ''}`;
 }
 
 // ---------- телеметрия ----------
@@ -99,6 +100,8 @@ function fit(w, h) {
   Object.values(CFG.roads.nodes || {}).forEach(([x, y]) => add(x, y));
   fixes.slice(-30).forEach(p => add(p[0], p[1]));
   track.slice(-30).forEach(p => add(p[0], p[1]));
+  const wf = T && T.road && T.road.wifi;
+  if (wf) { add(wf[0] - wf[2], wf[1] - wf[2]); add(wf[0] + wf[2], wf[1] + wf[2]); }
   if (!xs.length) add(0, 0);
   const pad = 4;
   const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad;
@@ -156,6 +159,14 @@ function draw() {
     if (f) {
       ctx.strokeStyle = 'rgba(224,163,58,.8)'; ctx.fillStyle = 'rgba(224,163,58,.12)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(X(f[0]), Y(f[1]), Math.max(4, (T.road.sigma || 2.5) * s), 0, 7); ctx.fill(); ctx.stroke();
+    }
+    // место по Wi-Fi: грубый круг, им проверяется GPS на подмену
+    const wf = T.road && T.road.wifi;
+    if (wf) {
+      ctx.strokeStyle = 'rgba(178,120,255,.9)'; ctx.fillStyle = 'rgba(178,120,255,.08)'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.arc(X(wf[0]), Y(wf[1]), Math.max(6, wf[2] * s), 0, 7); ctx.fill(); ctx.stroke();
+      ctx.setLineDash([]);
     }
     // оценка: след + стрелка
     ctx.strokeStyle = '#37c8a4'; ctx.lineWidth = 2;

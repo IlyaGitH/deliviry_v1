@@ -258,6 +258,7 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
            atsd_sensors/lib/atsd_sensors/gnss_node \
            atsd_sensors/lib/atsd_sensors/battery_node \
            atsd_sensors/lib/atsd_sensors/ble_node \
+           atsd_sensors/lib/atsd_sensors/wifi_node \
            atsd_actuators/lib/atsd_actuators/buzzer_node \
            atsd_actuators/lib/atsd_actuators/signal_node \
            atsd_perception/lib/atsd_perception/obstacle_node \

@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer='ATSD',
     maintainer_email='dev@atsd.local',
-    description='Лидар LD19, GNSS BN-880, гейдж X1202, BLE-метки',
+    description='Лидар LD19, GNSS BN-880, гейдж X1202, BLE-метки, место по Wi-Fi',
     license='MIT',
     entry_points={
         'console_scripts': [
@@ -22,6 +22,7 @@ setup(
             'gnss_node = atsd_sensors.gnss_node:main',
             'battery_node = atsd_sensors.battery_node:main',
             'ble_node = atsd_sensors.ble_node:main',
+            'wifi_node = atsd_sensors.wifi_node:main',
         ],
     },
 )

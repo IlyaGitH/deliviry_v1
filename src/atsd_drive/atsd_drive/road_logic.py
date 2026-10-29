@@ -130,9 +130,14 @@ class PoseFilter:
         self.P = (np.eye(3) - K @ H) @ self.P
         return True
 
-    def gnss_fix(self, x, y, sigma):
-        """Новый фикс. Возвращает состояние GPS: ok — принят, suspect — не верим."""
+    def gnss_fix(self, x, y, sigma, wifi=None):
+        """Новый фикс. Возвращает состояние GPS: ok — принят, suspect — не верим.
+        wifi — (x, y, точность м) по Wi-Fi: грубо, но подменой GPS не сбить; фикс дальше
+        трёх её точностей (не ближе 100 м) — подмена."""
         z = np.array([x, y])
+        if wifi is not None and np.linalg.norm(z - wifi[:2]) > max(100.0, 3.0 * wifi[2]):
+            self.gnss, self.consistent, self.last_fix = 'suspect', 0, None
+            return self.gnss
         if not self.ready:
             self.reset(x, y, None, sig_xy=sigma)
             self.gnss, self.last_fix = 'ok', z

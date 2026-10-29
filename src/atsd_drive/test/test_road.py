@@ -149,3 +149,12 @@ def test_gps_jammed_whole_trip_several_runs():
     # без GPS вовсе: путь только по колёсам (откалиброваны до 1 %), курс по разметке
     for r in run('jammed', range(5), odo_scale=1.01, pose_given=True):
         assert r['arrived'] and r['miss'] < 3.0 and r['dev'] < 0.5, r
+
+
+def test_wifi_catches_spoof_far_away():
+    f = PoseFilter()
+    # подмена «уводит» GPS на 2 км, Wi-Fi видит нас у начала координат ±40 м
+    assert f.gnss_fix(2000.0, 0.0, 2.5, wifi=(0.0, 0.0, 40.0)) == 'suspect'
+    assert not f.ready  # по подменённому фиксу позу не задаём
+    assert f.gnss_fix(5.0, 3.0, 2.5, wifi=(0.0, 0.0, 40.0)) == 'ok'
+    assert f.ready
