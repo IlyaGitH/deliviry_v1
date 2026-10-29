@@ -1,5 +1,6 @@
 # Грубое место по окрестным точкам Wi-Fi: Яндекс Локатор (с ключом) или beaconDB (без ключа).
 # Точность 15–50 м: для проверки GPS на подмену, не для езды.
+import datetime
 import json
 import re
 
@@ -72,3 +73,35 @@ def parse_response(provider, data):
         return float(loc['lat']), float(loc['lng']), float(data['accuracy'])
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def same_networks(a, b, need=0.6):
+    """Те же точки, что при прошлом запросе (доля общих от всех) — значит, робот почти на том же
+    месте: для Wi-Fi с точностью ±30 м это так. Запрос не тратим."""
+    return bool(a) and bool(b) and len(a & b) / len(a | b) >= need
+
+
+class Budget:
+    """Сколько запросов к платному/лимитному сервису осталось сегодня. Счёт в файле — переживает перезапуск."""
+
+    def __init__(self, path, limit):
+        self.path, self.limit = path, limit
+        try:
+            with open(path, encoding='utf-8') as f:
+                self.day, self.used = json.load(f)
+        except (OSError, ValueError, TypeError):
+            self.day, self.used = '', 0
+
+    def take(self, today=None):
+        today = today or datetime.date.today().isoformat()
+        if today != self.day:
+            self.day, self.used = today, 0
+        if self.used >= self.limit:
+            return False
+        self.used += 1
+        try:
+            with open(self.path, 'w', encoding='utf-8') as f:
+                json.dump([self.day, self.used], f)
+        except OSError:
+            pass  # не записали — посчитаем заново после перезапуска, не страшно
+        return True

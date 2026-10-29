@@ -1,6 +1,6 @@
 import json
 
-from atsd_sensors.wifi_logic import parse_iw, parse_nmcli, parse_response, request_body, usable
+from atsd_sensors.wifi_logic import Budget, same_networks, parse_iw, parse_nmcli, parse_response, request_body, usable
 
 NMCLI = r"""74\:4D\:28\:CD\:6A\:10:72:physics
 86\:D9\:E7\:C7\:8B\:20:40:Kafedra\:2
@@ -49,3 +49,18 @@ def test_parse_iw():
     aps = parse_iw(IW)
     assert aps[0] == ('50:ff:20:d4:da:9d', 84, 'physics')
     assert usable(aps) == [('50:ff:20:d4:da:9d', -58.0), ('11:22:33:44:55:66', -70.0)]  # скрытая выброшена
+
+
+def test_same_networks():
+    a = frozenset('abcde')
+    assert same_networks(a, frozenset('abcdf'))       # 4 из 6 общих
+    assert not same_networks(a, frozenset('afghi'))   # уехали
+    assert not same_networks(a, frozenset())
+
+
+def test_budget(tmp_path):
+    f = tmp_path / 'b.json'
+    b = Budget(f, 2)
+    assert b.take('2026-10-29') and b.take('2026-10-29') and not b.take('2026-10-29')
+    assert not Budget(f, 2).take('2026-10-29')        # счёт пережил перезапуск
+    assert Budget(f, 2).take('2026-10-30')            # новый день — снова можно
