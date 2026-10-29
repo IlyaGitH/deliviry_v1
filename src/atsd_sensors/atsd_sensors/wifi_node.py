@@ -35,11 +35,15 @@ class WifiNode(Node):
         self.pub_fix = self.create_publisher(NavSatFix, 'wifi/fix', 5)
         self.pub_status = self.create_publisher(String, 'wifi/status', 5)
         self.stop = threading.Event()
+        self.last_text = None
         threading.Thread(target=self.loop, daemon=True).start()
         self.get_logger().info(f'Место по Wi-Fi: {self.provider}, раз в {self.period:.0f} с')
 
     def status(self, text):
         self.pub_status.publish(String(data=f'wifi {self.provider}: {text}'))
+        if text != self.last_text:  # в журнал — только когда меняется, иначе строка каждые 20 с
+            self.get_logger().info(text)
+            self.last_text = text
 
     def scan(self):
         cmd = ['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface]
