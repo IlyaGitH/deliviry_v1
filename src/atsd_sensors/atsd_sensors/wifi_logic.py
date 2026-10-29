@@ -21,6 +21,27 @@ def parse_nmcli(text):
     return out
 
 
+def parse_iw(text):
+    """Вывод `iw dev wlan0 scan dump` (всё, что слышал драйвер) -> [(bssid, сигнал %, ssid)].
+    NetworkManager показывает не все из них, поэтому читаем и напрямую."""
+    out, cur = [], None
+    for line in text.splitlines():
+        m = re.match(r'BSS ([0-9a-fA-F:]{17})', line)
+        if m:
+            cur = [m.group(1).lower(), 0, '']
+            out.append(cur)
+        elif cur is not None:
+            t = line.strip()
+            if t.startswith('signal:'):
+                try:
+                    cur[1] = max(0, min(100, int(2 * (float(t.split()[1]) + 100))))  # дБм -> %
+                except (IndexError, ValueError):
+                    pass
+            elif t.startswith('SSID:'):
+                cur[2] = t[5:].strip()
+    return [tuple(x) for x in out]
+
+
 def usable(aps):
     """Без скрытых сетей и *_nomap (их владельцы просили не класть в базы); раздачи телефонов
     сервисы сами отбрасывают — они ездят."""

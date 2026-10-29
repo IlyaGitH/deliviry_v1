@@ -12,7 +12,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import String
 
-from atsd_sensors.wifi_logic import URL, parse_nmcli, parse_response, request_body, usable
+from atsd_sensors.wifi_logic import URL, parse_iw, parse_nmcli, parse_response, request_body, usable
 
 
 class WifiNode(Node):
@@ -48,12 +48,18 @@ class WifiNode(Node):
     def scan(self):
         cmd = ['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface]
         r = subprocess.run(cmd + ['--rescan', 'yes'], capture_output=True, text=True, timeout=20)
-        if r.returncode == 0:
-            return parse_nmcli(r.stdout), ''
-        # не дали сканировать (нет правила polkit) или режим точки доступа — берём кэш
-        err = (r.stderr.strip().splitlines() or ['?'])[-1][:80]
-        r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=20)
-        return (parse_nmcli(r.stdout) if r.returncode == 0 else []), err
+        err = ''
+        if r.returncode != 0:
+            # не дали сканировать (нет правила polkit) или режим точки доступа — берём кэш
+            err = (r.stderr.strip().splitlines() or ['?'])[-1][:80]
+            r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=20)
+        found = parse_nmcli(r.stdout) if r.returncode == 0 else []
+        try:  # драйвер слышит больше, чем показывает NetworkManager
+            d = subprocess.run(['iw', 'dev', self.iface, 'scan', 'dump'], capture_output=True, text=True, timeout=10)
+            found += parse_iw(d.stdout) if d.returncode == 0 else []
+        except FileNotFoundError:
+            pass  # iw не установлен
+        return found, err
 
     def locate(self, aps):
         req = urllib.request.Request(URL[self.provider].format(key=self.key),
