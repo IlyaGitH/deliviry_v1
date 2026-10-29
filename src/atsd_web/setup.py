@@ -13,7 +13,6 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'static'), glob('atsd_web/static/*.*')),
-        (os.path.join('share', package_name, 'static', 'maps'), glob('atsd_web/static/maps/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

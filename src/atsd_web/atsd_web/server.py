@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import asyncio
 import json
+import math
 import os
 import secrets
 import threading
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,7 +21,6 @@ from atsd_web.ros_link import RosLink
 DATA_DIR = Path(os.environ.get('ATSD_DATA', '/opt/atsd/data'))
 POINTS_FILE = DATA_DIR / 'points.json'
 ORDERS_FILE = DATA_DIR / 'orders.json'
-MAPS_DIR = Path(os.environ.get('ATSD_MAPS', '/opt/atsd/maps'))
 ROADS_FILE = DATA_DIR / 'roads.json'
 
 DEFAULT_POINTS = [
@@ -29,34 +30,68 @@ DEFAULT_POINTS = [
     {'id': 'depot',   'name': 'Склад',             'x': 0.0,  'y': 3.0, 'indoor': True},
 ]
 
-DEFAULT_MAPS = {
-    'indoor': {'image': '/static/maps/indoor.png', 'meters_per_pixel': 0.05,
-               'origin': [-2.0, -2.0], 'label': 'Помещение'},
-    'outdoor': {'image': '/static/maps/outdoor.jpg', 'meters_per_pixel': 0.35,
-                'origin': [-40.0, -40.0], 'label': 'Территория'},
-}
-
 _store_lock = threading.Lock()
 
 
-def robot_map(kind):
-    """Подложка из /opt/atsd/maps/<kind>.yaml (формат map_saver: image, resolution, origin).
-    indoor — карта лидара, outdoor — спутниковый снимок; PGM браузер не покажет — переводим в PNG."""
-    try:
-        import cv2
-        import yaml
-        meta_file = MAPS_DIR / f'{kind}.yaml'
-        meta = yaml.safe_load(meta_file.read_text())
-        src = meta_file.parent / meta['image']
-        png = DATA_DIR / f'{kind}.png'
-        mtime = int(src.stat().st_mtime)
-        if not png.exists() or png.stat().st_mtime < mtime:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            cv2.imwrite(str(png), cv2.imread(str(src), cv2.IMREAD_COLOR))
-        return {'image': f'/api/map/{kind}.png?v={mtime}', 'meters_per_pixel': float(meta['resolution']),
-                'origin': [float(v) for v in meta['origin'][:2]], 'label': DEFAULT_MAPS[kind]['label']}
-    except Exception:
+# Подложка — карта Яндекса вокруг origin графа дорог (начало координат карты робота).
+# Static API 1.x отдаёт картинку без ключа; одна картинка 650×450, на z=17 это ~470×325 м
+MAP_LAYERS = {'map': ('map', 'png', 'Схема'), 'sat': ('sat', 'jpg', 'Спутник')}
+MAP_ZOOM = int(os.environ.get('ATSD_MAP_ZOOM', '17'))
+MAP_W, MAP_H = 650, 450
+_map_fail = {}  # слой -> когда не удалось скачать: без интернета не тормозим каждую загрузку страницы
+
+
+def map_origin():
+    """Origin из roads.json. Нет — берём текущее место робота (GPS, иначе Wi-Fi) и записываем:
+    с ним nav_node начнёт переводить GPS и Wi-Fi в метры карты, road_mark продолжит тот же граф."""
+    roads = _load(ROADS_FILE, {})
+    if roads.get('origin'):
+        return tuple(roads['origin'])
+    t = link.snapshot() if link else {}
+    g, w = t.get('gnss') or {}, t.get('wifi_geo')
+    here = (g['lat'], g['lon']) if g.get('fix') else (w[0], w[1]) if w else None
+    if here is None:
         return None
+    roads.setdefault('nodes', {})
+    roads.setdefault('edges', [])
+    roads['origin'] = [round(here[0], 7), round(here[1], 7)]
+    with _store_lock:
+        _save(ROADS_FILE, roads)
+    print(f'Начало координат карты по {"GPS" if g.get("fix") else "Wi-Fi"}: {roads["origin"]}')
+    return tuple(roads['origin'])
+
+
+def yandex_map(layer):
+    """{'image', 'meters_per_pixel', 'origin' — левый нижний угол в метрах, 'label'} или None."""
+    origin = map_origin()
+    if origin is None:
+        return None
+    name, ext, label = MAP_LAYERS[layer]
+    img = DATA_DIR / f'yandex_{layer}.{ext}'
+    meta_file = DATA_DIR / f'yandex_{layer}.json'
+    want = [origin[0], origin[1], MAP_ZOOM]
+    if _load(meta_file, None) != want or not img.exists():
+        if time.time() - _map_fail.get(layer, 0) < 60:
+            return None
+        url = (f'https://static-maps.yandex.ru/1.x/?ll={origin[1]:.7f},{origin[0]:.7f}'
+               f'&z={MAP_ZOOM}&size={MAP_W},{MAP_H}&l={name}&lang=ru_RU')
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = r.read()
+            if not data.startswith((b'\x89PNG', b'\xff\xd8')):
+                raise ValueError('не картинка')
+        except (OSError, ValueError) as e:
+            _map_fail[layer] = time.time()
+            print(f'Карта Яндекса ({label}) не скачалась: {e}')
+            return None
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(data)
+        _save(meta_file, want)
+    # проекция Яндекса — Меркатор на эллипсоиде: метров в пикселе на широте origin
+    lat = math.radians(origin[0])
+    mpp = 2 * math.pi * 6378137.0 / (256 * 2 ** MAP_ZOOM) * math.cos(lat) / math.sqrt(1 - 0.00669438 * math.sin(lat) ** 2)
+    return {'image': f'/api/map/{layer}.{ext}?v={int(img.stat().st_mtime)}', 'meters_per_pixel': mpp,
+            'origin': [-MAP_W * mpp / 2, -MAP_H * mpp / 2], 'label': label}
 
 
 def _load(path, fallback):
@@ -234,18 +269,20 @@ def index():
 
 @app.get('/api/config')
 def api_config():
-    maps = {k: robot_map(k) or v for k, v in DEFAULT_MAPS.items()}
+    maps = {k: m for k in MAP_LAYERS if (m := yandex_map(k))}
     roads = _load(ROADS_FILE, {})
     return {'points': points(), 'maps': maps,
             'roads': {'nodes': roads.get('nodes', {}), 'edges': roads.get('edges', [])}}
 
 
-@app.get('/api/map/{kind}.png')
-def api_map_png(kind: str):
-    png = DATA_DIR / f'{kind}.png'
-    if kind not in DEFAULT_MAPS or not png.exists():
+@app.get('/api/map/{layer}.{ext}')
+def api_map_image(layer: str, ext: str):
+    if layer not in MAP_LAYERS or MAP_LAYERS[layer][1] != ext:
         raise HTTPException(404, 'Карты нет')
-    return FileResponse(str(png), media_type='image/png')
+    img = DATA_DIR / f'yandex_{layer}.{ext}'
+    if not img.exists():
+        raise HTTPException(404, 'Карты нет')
+    return FileResponse(str(img), media_type='image/png' if ext == 'png' else 'image/jpeg')
 
 
 @app.post('/api/points')
@@ -446,7 +483,7 @@ def main(args=None):
     if debug_port:
         # отдельный сервер в своём потоке: сигналы остановки ловит основной, этот уходит вместе с процессом
         from atsd_web.debug import attach, debug_app
-        attach(link, STATIC, api_config)
+        attach(link, STATIC, api_config, api_map_image)
         threading.Thread(target=uvicorn.run, args=(debug_app,), daemon=True,
                          kwargs={'host': '0.0.0.0', 'port': debug_port, 'log_level': 'warning'}).start()
         print(f'Отладочная страница: порт {debug_port}')

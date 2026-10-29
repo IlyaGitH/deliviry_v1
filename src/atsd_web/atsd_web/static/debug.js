@@ -6,7 +6,12 @@ const fixes = [], track = []; // история за последние ~2 ми�
 let paused = false;
 let view = null;              // {cx, cy, scale} — подбирается сам, колесо/щипок меняют масштаб
 
-fetch('/api/config').then(r => r.json()).then(c => { CFG = c; view = null; });
+let mapImg = null;  // схема Яндекса вокруг origin (как на главной)
+fetch('/api/config').then(r => r.json()).then(c => {
+  CFG = c; view = null;
+  const m = (c.maps || {}).map;
+  if (m) { const img = new Image(); img.onload = () => { mapImg = img; }; img.src = m.image; }
+});
 
 // ---------- камера ----------
 const cam = $('cam');
@@ -125,6 +130,13 @@ function draw() {
   const cx = userZoom > 1 && r ? r[0] : view.cx, cy = userZoom > 1 && r ? r[1] : view.cy;
   const X = x => w / 2 + (x - cx) * s, Y = y => h / 2 - (y - cy) * s;
 
+  const meta = (CFG.maps || {}).map;
+  if (mapImg && meta) {
+    const mpp = meta.meters_per_pixel, [ox, oy] = meta.origin;
+    ctx.filter = 'invert(1) hue-rotate(180deg) brightness(.7) contrast(.9)';
+    ctx.drawImage(mapImg, X(ox), Y(oy + mapImg.naturalHeight * mpp), mapImg.naturalWidth * mpp * s, mapImg.naturalHeight * mpp * s);
+    ctx.filter = 'none';
+  }
   // сетка 5 м
   ctx.strokeStyle = '#1f2b33'; ctx.lineWidth = 1;
   const step = s * 5 < 20 ? 25 : 5;

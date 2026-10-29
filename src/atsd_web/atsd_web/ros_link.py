@@ -21,6 +21,7 @@ DEFAULT = {
     },
     'lock': {'closed': True, 'busy': False, 'tamper': False},
     'gnss': {'fix': False, 'lat': None, 'lon': None},
+    'wifi_geo': None,  # (широта, долгота, точность м) по Wi-Fi
     'estop': False,
     'mission': None,
     'obstacle': '',
@@ -58,10 +59,13 @@ def _mock_frame(tick, speed):
     return buf.tobytes() if ok else None
 
 
+MOCK_GEO = (52.90114, 35.98632)  # «Созвездие Орла»: там стоит робот
+
+
 def _mock_nmea(x, y, yaw, speed):
-    """Имитация строк BN-880 для отладочной консоли: позиция вокруг Тольятти."""
-    lat = 53.5078 + y / 111320.0
-    lon = 49.4204 + x / (111320.0 * math.cos(math.radians(53.5078)))
+    """Имитация строк BN-880 для отладочной консоли: позиция вокруг MOCK_GEO."""
+    lat = MOCK_GEO[0] + y / 111320.0
+    lon = MOCK_GEO[1] + x / (111320.0 * math.cos(math.radians(MOCK_GEO[0])))
     t = time.strftime('%H%M%S.00', time.gmtime())
     la = f'{int(lat):02d}{(lat % 1) * 60:07.4f}'
     lo = f'{int(lon):03d}{(lon % 1) * 60:07.4f}'
@@ -234,6 +238,8 @@ class RosLink:
         sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
         sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
         sub(String, '/wifi/status', lambda m: self._log(m.data, 'wifi'), 5)
+        sub(NavSatFix, '/wifi/fix', lambda m: self._set(
+            ['wifi_geo'], (m.latitude, m.longitude, m.position_covariance[0] ** 0.5)), 5)
         sub(String, '/perception/lane', lambda m: self._set(['lane'], m.data), 5)
 
         def on_zone(msg: String):
@@ -348,6 +354,7 @@ class RosLink:
                                        'yaw_known': True, 'ready': True, 'pose': [x, y, yaw],
                                        'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5,
                                        'wifi': [round(x + 6, 1), round(y - 4, 1), 25.0]}
+                self._state['wifi_geo'] = (MOCK_GEO[0] + (y - 4) / 111320.0, MOCK_GEO[1], 25.0)
                 self._state['gnss_status'] = f'sats=9/14 snr=38дБx14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
                 self._state['lane'] = '0.050 -0.0100 3.50 2' if speed else 'none'
             if tick % 2 == 0:

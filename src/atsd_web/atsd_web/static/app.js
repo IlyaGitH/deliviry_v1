@@ -7,7 +7,9 @@ const cv = $('map'), ctx = cv.getContext('2d');
 
 let CFG = { points: [], maps: {} };
 let LAST = null;
-let mapMode = 'auto';
+const MIN_SPAN = 150;
+let mapZoom = 1;      // колесо мыши над картой
+let mapMode = 'map';  // подложка Яндекса: map — схема, sat — спутник
 let placing = null;
 let settingPose = null;  // null | 'pos' | {x, y} — «Робот здесь»
 let localPoints = null;
@@ -92,9 +94,7 @@ async function api(path, opts) {
 }
 
 function activeMapKey() {
-  if (mapMode !== 'auto') return mapMode;
-  if (!LAST) return 'indoor';
-  return LAST.telemetry.indoor ? 'indoor' : 'outdoor';
+  return mapMode;
 }
 
 function loadImage(key) {
@@ -129,13 +129,11 @@ function view() {
   const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
   const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
 
+  // не меньше MIN_SPAN м: карта Яндекса растянутой до пары точек — каша из пикселей
   const w = cv.clientWidth, h = cv.clientHeight;
-  const s = Math.min(w / (maxX - minX), h / (maxY - minY));
-  return {
-    s,
-    ox: (w - (maxX - minX) * s) / 2 - minX * s,
-    oy: h - ((h - (maxY - minY) * s) / 2 - minY * s),
-  };
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  const s = Math.min(w / Math.max(maxX - minX, MIN_SPAN), h / Math.max(maxY - minY, MIN_SPAN * h / w)) * mapZoom;
+  return { s, ox: w / 2 - cx * s, oy: h / 2 + cy * s };
 }
 
 const toScreen = (v, x, y) => [v.ox + x * v.s, v.oy - y * v.s];
@@ -156,9 +154,10 @@ function draw() {
     const [ox, oy] = meta.origin;
     const wm = img.naturalWidth * mpp, hm = img.naturalHeight * mpp;
     const [sx, sy] = toScreen(v, ox, oy + hm);
-    ctx.globalAlpha = 0.85;
+    // схему Яндекса — в тёмные цвета интерфейса (где canvas filter не поддержан, останется светлой)
+    ctx.filter = key === 'map' ? 'invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)' : 'brightness(.8)';
     ctx.drawImage(img, sx, sy, wm * v.s, hm * v.s);
-    ctx.globalAlpha = 1;
+    ctx.filter = 'none';
   } else {
     ctx.strokeStyle = '#1b262e';
     ctx.lineWidth = 1;
@@ -187,7 +186,7 @@ function draw() {
   const pts = localPoints || CFG.points;
   const targetId = LAST && LAST.order ? LAST.order.target : null;
 
-  // Настоящий путь Nav2 (топик /plan), пока робот едет; без него — прямая до цели
+  // Маршрут nav_node (топик /plan), пока робот едет; без него — прямая до цели
   const plan = LAST && LAST.telemetry.plan;
   const moving = LAST && LAST.order && ['TO_PICKUP', 'TO_DROP', 'RETURN'].includes(LAST.order.brain_state);
   if (moving && plan && plan.length > 1) {
@@ -241,7 +240,7 @@ function draw() {
   }
 
   $('mapHint').textContent =
-    (meta ? meta.label : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м');
+    (meta ? meta.label + ' · колесо — масштаб' : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м');
 }
 
 function render(msg) {
@@ -434,6 +433,12 @@ $('btnHere').onclick = () => {
   toast(settingPose ? 'Ткните в карту, где робот стоит на самом деле' : 'Отменено');
 };
 
+cv.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  mapZoom = Math.min(20, Math.max(0.3, mapZoom * (ev.deltaY < 0 ? 1.25 : 0.8)));
+  draw();
+}, { passive: false });
+
 cv.addEventListener('pointerdown', async (ev) => {
   const r = cv.getBoundingClientRect();
   const v = view();
@@ -528,7 +533,12 @@ async function boot() {
   CFG = await api('/api/config');
   fillSelects();
   renderPointList();
-  loadImage('indoor'); loadImage('outdoor');
+  loadImage('map'); loadImage('sat');
+  // карты ещё нет (нет интернета или места робота) — спрашиваем снова, пока не появится
+  const retry = setInterval(async () => {
+    if (Object.keys(CFG.maps || {}).length) return clearInterval(retry);
+    try { CFG.maps = (await api('/api/config')).maps; loadImage('map'); loadImage('sat'); draw(); } catch (e) {}
+  }, 15000);
   fitCanvas(); draw();
   connect();
 }

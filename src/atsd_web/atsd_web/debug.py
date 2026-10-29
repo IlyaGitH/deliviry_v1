@@ -12,9 +12,9 @@ debug_app = FastAPI(title='АТСД-1М · отладка', docs_url=None, redoc
 _ctx = {}
 
 
-def attach(link, static_dir: Path, config_fn):
-    """link — RosLink веба, config_fn — точки и граф дорог для карты."""
-    _ctx.update(link=link, static=static_dir, config=config_fn)
+def attach(link, static_dir: Path, config_fn, map_fn):
+    """link — RosLink веба, config_fn — точки, граф дорог и подложки, map_fn — картинка подложки."""
+    _ctx.update(link=link, static=static_dir, config=config_fn, map=map_fn)
     debug_app.mount('/static', StaticFiles(directory=str(static_dir)), name='static')
 
 
@@ -30,6 +30,11 @@ def index():
 @debug_app.get('/api/config')
 def config():
     return _ctx['config']()
+
+
+@debug_app.get('/api/map/{layer}.{ext}')
+def map_image(layer: str, ext: str):
+    return _ctx['map'](layer, ext)
 
 
 @debug_app.get('/stream')
