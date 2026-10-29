@@ -261,6 +261,7 @@ class NavNode(Node):
         self.pub_plan.publish(msg)
 
     def publish_status(self):
+        self.load_roads()  # граф или origin могли поменять (road_mark, веб) — подхватываем без перезапуска
         f = self.nav.filter
         lane_on = time.monotonic() - self.lane_t < self.lane_timeout
         self.pub_status.publish(String(data=json.dumps({
