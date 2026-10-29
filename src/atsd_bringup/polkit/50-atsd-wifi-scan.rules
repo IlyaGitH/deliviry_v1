@@ -1,0 +1,7 @@
+// wifi_node (пользователь atsd, без сеанса) сканирует Wi-Fi для определения места.
+// По умолчанию NetworkManager даёт сканировать только из сеанса пользователя.
+polkit.addRule(function(action, subject) {
+  if (action.id == "org.freedesktop.NetworkManager.wifi.scan" && subject.user == "atsd") {
+    return polkit.Result.YES;
+  }
+});

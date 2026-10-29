@@ -47,11 +47,13 @@ class WifiNode(Node):
 
     def scan(self):
         cmd = ['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface]
-        for rescan in ('yes', 'no'):  # в режиме точки доступа сканировать нельзя — берём что есть
-            r = subprocess.run(cmd + ['--rescan', rescan], capture_output=True, text=True, timeout=20)
-            if r.returncode == 0:
-                return parse_nmcli(r.stdout)
-        return []
+        r = subprocess.run(cmd + ['--rescan', 'yes'], capture_output=True, text=True, timeout=20)
+        if r.returncode == 0:
+            return parse_nmcli(r.stdout), ''
+        # не дали сканировать (нет правила polkit) или режим точки доступа — берём кэш
+        err = (r.stderr.strip().splitlines() or ['?'])[-1][:80]
+        r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=20)
+        return (parse_nmcli(r.stdout) if r.returncode == 0 else []), err
 
     def locate(self, aps):
         req = urllib.request.Request(URL[self.provider].format(key=self.key),
@@ -69,9 +71,11 @@ class WifiNode(Node):
     def loop(self):
         while not self.stop.wait(self.period):
             try:
-                aps = usable(self.scan())
+                found, err = self.scan()
+                aps = usable(found)
                 if len(aps) < self.min_aps:
-                    self.status(f'видно {len(aps)} точек — мало')
+                    why = f'; сканировать не дали: {err} — старый список' if err else ''
+                    self.status(f'видно {len(aps)} точек (всего {len(found)}) — мало{why}')
                     continue
                 pos = self.locate(aps[:20])
             except (OSError, subprocess.SubprocessError, ValueError) as e:

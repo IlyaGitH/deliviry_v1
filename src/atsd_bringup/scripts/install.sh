@@ -278,6 +278,7 @@ install -m 755 "${WS_DIR}/src/atsd_bringup/scripts/hw_check.py" "${ATSD_HOME}/hw
 install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/udev/99-atsd.rules" /etc/udev/rules.d/
+install -m 644 "${WS_DIR}/src/atsd_bringup/polkit/50-atsd-wifi-scan.rules" /etc/polkit-1/rules.d/
 
 mkdir -p /etc/atsd
 install -m 644 "${WS_DIR}/src/atsd_bringup/config/atsd-ros.sh"  /etc/profile.d/atsd-ros.sh
