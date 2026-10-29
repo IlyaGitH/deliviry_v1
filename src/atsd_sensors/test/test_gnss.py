@@ -1,4 +1,4 @@
-from atsd_sensors.gnss_logic import GNSS_ID, cfg_gnss_payload, snr_summary
+from atsd_sensors.gnss_logic import GNSS_ID, cfg_gnss_payload, cfg_nmea41_payload, snr_summary
 
 
 def blocks(payload):
@@ -27,3 +27,8 @@ def test_gps_brings_sbas_qzss():
 def test_snr_summary():
     assert snr_summary({}) == '-'
     assert snr_summary({'GP': [17, [37, 40, 42, 41], 0.0], 'GL': [5, [26], 0.0]}) == '40дБx5'
+
+
+def test_nmea41():
+    p = cfg_nmea41_payload()
+    assert len(p) == 20 and p[1] == 0x41 and p[11] == 1

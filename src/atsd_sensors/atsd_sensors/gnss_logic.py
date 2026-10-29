@@ -27,3 +27,8 @@ def cfg_gnss_payload(systems):
         flags = (0x01 << 16) | (0x01 if name in on else 0)  # сигнал L1, бит 0 — включена
         blocks += bytes([gid, res if name in on else 0, mx, 0]) + flags.to_bytes(4, 'little')
     return bytes([0, 0, 0xFF, len(GNSS_ID)]) + blocks
+
+
+def cfg_nmea41_payload():
+    """UBX-CFG-NMEA: NMEA 4.1. В 4.0 u-blox не выводит спутники BeiDou в GSV — их не видно в консоли."""
+    return bytes([0, 0x41, 0, 0]) + bytes(4) + bytes([0, 0, 0, 1]) + bytes(2) + bytes(6)

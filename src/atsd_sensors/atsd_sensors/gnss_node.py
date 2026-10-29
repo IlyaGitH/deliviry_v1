@@ -15,7 +15,7 @@ from std_msgs.msg import String
 
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
-from atsd_sensors.gnss_logic import FIX_NAME, MAJOR, cfg_gnss_payload, snr_summary
+from atsd_sensors.gnss_logic import FIX_NAME, MAJOR, cfg_gnss_payload, cfg_nmea41_payload, snr_summary
 
 
 KNOTS_TO_MS = 0.514444
@@ -160,6 +160,8 @@ class GnssNode(Node):
             self.ser.write(ubx(0x06, 0x3E, cfg_gnss_payload(self.systems)))
             self.get_logger().info(f'Слушаю системы: {", ".join(self.systems)}')
             time.sleep(0.3)
+            self.ser.write(ubx(0x06, 0x17, cfg_nmea41_payload()))
+            time.sleep(0.05)
 
         meas_ms = max(100, int(round(1000.0 / max(self.nav_rate, 0.5))))
         self.ser.write(ubx(0x06, 0x08,
