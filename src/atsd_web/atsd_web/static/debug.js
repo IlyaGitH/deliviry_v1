@@ -15,9 +15,24 @@ fetch('/api/config').then(r => r.json()).then(c => {
 
 // ---------- камера ----------
 const cam = $('cam');
-function startStream() { cam.src = '/stream?t=' + Date.now(); }
-cam.onerror = () => setTimeout(startStream, 2000);
-startStream();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// по одному кадру: следующий просим, только показав этот — задержка не копится на медленном Wi-Fi
+async function camLoop() {
+  let seq = -1, url = null;
+  for (;;) {
+    try {
+      const r = await fetch(`/frame.jpg?after=${seq}`, { cache: 'no-store' });
+      if (r.status !== 200) { await sleep(500); continue; }
+      seq = +r.headers.get('X-Seq');
+      const next = URL.createObjectURL(await r.blob());
+      cam.src = next;
+      await cam.decode().catch(() => {});
+      if (url) URL.revokeObjectURL(url);
+      url = next;
+    } catch (e) { await sleep(1000); }
+  }
+}
+camLoop();
 
 // ---------- консоль ----------
 const con = $('con');

@@ -143,6 +143,7 @@ class RosLink:
         from rclpy.node import Node
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from nav_msgs.msg import Odometry, Path
+        from rclpy.qos import qos_profile_sensor_data
         from sensor_msgs.msg import BatteryState, CompressedImage, NavSatFix, NavSatStatus
         from std_msgs.msg import Bool, Empty, String
         from std_srvs.srv import Trigger
@@ -235,7 +236,8 @@ class RosLink:
                 pass
 
         sub(String, '/road/status', on_road, 5)
-        sub(CompressedImage, '/perception/debug/compressed', lambda m: self._on_jpeg(m.data), 2)
+        # кадр — «лучшее усилие», глубина 1: опоздавший кадр не нужен, переотправки только тормозят
+        sub(CompressedImage, '/perception/debug/compressed', lambda m: self._on_jpeg(m.data), qos_profile_sensor_data)
         sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
         sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
         sub(String, '/wifi/status', lambda m: self._log(m.data, 'wifi'), 5)

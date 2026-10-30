@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 debug_app = FastAPI(title='АТСД-1М · отладка', docs_url=None, redoc_url=None)
@@ -37,23 +37,19 @@ def map_image(layer: str, ext: str):
     return _ctx['map'](layer, ext)
 
 
-@debug_app.get('/stream')
-async def stream():
-    """MJPEG: браузер показывает его обычным <img>, кадры приходят по мере появления."""
+@debug_app.get('/frame.jpg')
+async def frame(after: int = -1):
+    """Один свежий кадр, новее after (ждём его до 2 с). Браузер просит следующий, только получив этот:
+    в сети всегда не больше одного кадра. Поток MJPEG на медленном Wi-Fi копил кадры в буфере —
+    картинка отставала на десятки секунд."""
     link = _ctx['link']
-
-    async def frames():
-        last = -1
-        while True:
-            seq, jpg, _ = link.frame()
-            if jpg is not None and seq != last:
-                last = seq
-                yield (b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ' +
-                       str(len(jpg)).encode() + b'\r\n\r\n' + jpg + b'\r\n')
-            await asyncio.sleep(0.04)
-
-    return StreamingResponse(frames(), media_type='multipart/x-mixed-replace; boundary=frame',
-                             headers={'Cache-Control': 'no-cache'})
+    for _ in range(50):
+        seq, jpg, _ = link.frame()
+        if jpg is not None and seq != after:
+            return Response(jpg, media_type='image/jpeg',
+                            headers={'X-Seq': str(seq), 'Cache-Control': 'no-store'})
+        await asyncio.sleep(0.04)
+    return Response(status_code=204)
 
 
 @debug_app.websocket('/ws')
