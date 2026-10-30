@@ -326,6 +326,10 @@ def api_create(body: OrderIn):
     m = tele.get('mission') or {}
     if m.get('state') in ('TO_PICKUP', 'WAIT_LOAD', 'TO_DROP', 'WAIT_UNLOAD', 'RETURN'):
         raise HTTPException(409, 'Робот выполняет другой рейс')
+    if (tele.get('road') or {}).get('ready') is False:
+        # иначе nav_node через 20 с отменит рейс с no_position
+        raise HTTPException(409, 'Робот не знает, где он: GPS нет. Нажмите «Робот здесь» и покажите на карте, '
+                                 'где он стоит и куда смотрит')
 
     order = {
         'id': secrets.token_hex(4), 'from_id': body.from_id, 'to_id': body.to_id,

@@ -118,10 +118,15 @@ function fitCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+// место робота известно: GPS, «Робот здесь» или (без nav_node) нет сведений об обратном
+function poseKnown() {
+  return !!LAST && (LAST.telemetry.road || {}).ready !== false;
+}
+
 function view() {
   const pts = (localPoints || CFG.points);
   const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-  if (LAST) { xs.push(LAST.telemetry.pose.x); ys.push(LAST.telemetry.pose.y); }
+  if (poseKnown()) { xs.push(LAST.telemetry.pose.x); ys.push(LAST.telemetry.pose.y); }
   Object.values((CFG.roads || {}).nodes || {}).forEach(([x, y]) => { xs.push(x); ys.push(y); });
   if (!xs.length) { xs.push(0); ys.push(0); }
 
@@ -224,7 +229,7 @@ function draw() {
     ctx.fillText(p.name, x, y - 14);
   });
 
-  if (LAST) {
+  if (poseKnown()) {
     const { x: rx, y: ry, yaw } = LAST.telemetry.pose;
     const [x, y] = toScreen(v, rx, ry);
     ctx.save();
@@ -242,7 +247,8 @@ function draw() {
   }
 
   $('mapHint').textContent =
-    (meta ? meta.label + ' · колесо — масштаб' : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м');
+    (meta ? meta.label + ' · колесо — масштаб' : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м')
+    + (LAST && !poseKnown() ? ' · где робот — неизвестно: «Робот здесь»' : '');
 }
 
 function render(msg) {
