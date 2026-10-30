@@ -353,7 +353,7 @@ class RosLink:
                 self._state['road'] = {'gnss': 'ok', 'mode': 'lane' if speed else 'idle', 'lane': 2,
                                        'yaw_known': True, 'ready': True, 'pose': [x, y, yaw],
                                        'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5,
-                                       'wifi': [round(x + 6, 1), round(y - 4, 1), 25.0]}
+                                       'wifi': [round(x + 6, 1), round(y - 4, 1), 25.0], 'sigma_xy': 6.0}
                 self._state['wifi_geo'] = (MOCK_GEO[0] + (y - 4) / 111320.0, MOCK_GEO[1], 25.0)
                 self._state['gnss_status'] = f'sats=9/14 snr=38дБx14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
                 self._state['lane'] = '0.050 -0.0100 3.50 2' if speed else 'none'

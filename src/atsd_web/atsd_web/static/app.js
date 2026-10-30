@@ -186,6 +186,21 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
   });
 
+  // место по Wi-Fi (±десятки метров) и насколько робот уверен в своём месте
+  const road = (LAST && LAST.telemetry.road) || {};
+  if (road.wifi) {
+    const [wx, wy] = toScreen(v, road.wifi[0], road.wifi[1]);
+    ctx.strokeStyle = 'rgba(140,70,230,.9)'; ctx.fillStyle = 'rgba(140,70,230,.10)';
+    ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
+    ctx.beginPath(); ctx.arc(wx, wy, Math.max(8, road.wifi[2] * v.s), 0, 7); ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (poseKnown() && road.sigma_xy > 2) {
+    const [px, py] = toScreen(v, LAST.telemetry.pose.x, LAST.telemetry.pose.y);
+    ctx.fillStyle = 'rgba(55,200,164,.15)';
+    ctx.beginPath(); ctx.arc(px, py, road.sigma_xy * v.s, 0, 7); ctx.fill();
+  }
+
   const pts = localPoints || CFG.points;
   const targetId = LAST && LAST.order ? LAST.order.target : null;
 

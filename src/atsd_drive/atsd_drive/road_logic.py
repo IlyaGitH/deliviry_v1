@@ -170,6 +170,18 @@ class PoseFilter:
                 self.gnss, self.consistent = 'suspect', 0
         return self.gnss
 
+    def wifi_fix(self, x, y, sigma):
+        """Место по Wi-Fi (±десятки метров). Без GPS и «Робот здесь» — старт отсюда; в пути поправляет,
+        только если сами знаем место хуже, чем Wi-Fi: его ошибка — постоянный сдвиг для этих
+        роутеров, повторами она не уменьшается, и верить ему точнее его точности нельзя."""
+        if not self.ready:
+            self.reset(x, y, None, sig_xy=sigma)
+            return True
+        if math.sqrt(max(self.P[0, 0], self.P[1, 1])) < sigma:
+            return False
+        H = np.array([[1.0, 0, 0], [0, 1.0, 0]])
+        return self._update(np.array([x, y]), self.X[:2], H, np.eye(2) * sigma ** 2, GATE_2D)
+
     def gnss_lost(self):
         if self.gnss != 'suspect':
             self.gnss = 'none'

@@ -158,3 +158,16 @@ def test_wifi_catches_spoof_far_away():
     assert not f.ready  # по подменённому фиксу позу не задаём
     assert f.gnss_fix(5.0, 3.0, 2.5, wifi=(0.0, 0.0, 40.0)) == 'ok'
     assert f.ready
+
+
+def test_wifi_starts_and_bounds_but_does_not_override():
+    f = PoseFilter()
+    assert f.wifi_fix(10.0, 5.0, 30.0) and f.ready          # старт без GPS — с Wi-Fi
+    assert abs(math.sqrt(f.P[0, 0]) - 30.0) < 1e-6
+    f.reset(0.0, 0.0, 0.0, sig_xy=0.5)                        # «Робот здесь» — точнее Wi-Fi
+    assert not f.wifi_fix(20.0, 0.0, 30.0)                    # Wi-Fi не тянет точную оценку
+    assert np.allclose(f.X[:2], [0.0, 0.0])
+    f.P[:2, :2] = np.eye(2) * 40.0 ** 2                       # знаем хуже Wi-Fi — тогда поправляет
+    x_before = f.X[0]
+    assert f.wifi_fix(x_before + 25.0, 0.0, 30.0)
+    assert f.X[0] > x_before + 5.0

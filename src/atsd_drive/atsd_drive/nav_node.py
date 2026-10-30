@@ -135,6 +135,10 @@ class NavNode(Node):
         x, y = to_local(msg.latitude, msg.longitude, self.origin)
         self.wifi = (x, y, math.sqrt(max(msg.position_covariance[0], 1.0)))
         self.wifi_t = time.monotonic()
+        was_ready = self.nav.filter.ready
+        if self.nav.filter.wifi_fix(*self.wifi) and not was_ready:
+            self.get_logger().info(f'Место по Wi-Fi: {x:.0f}, {y:.0f} ±{self.wifi[2]:.0f} м — '
+                                   'точнее даст GPS или «Робот здесь»')
 
     def on_vel(self, msg: TwistWithCovarianceStamped):
         ve, vn = msg.twist.twist.linear.x, msg.twist.twist.linear.y
@@ -270,6 +274,7 @@ class NavNode(Node):
             'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready),
             # для отладочной страницы: оценка и сырой GPS в метрах карты
             'pose': [round(float(v), 3) for v in f.X] if f.ready else None,
+            'sigma_xy': round(math.sqrt(max(f.P[0, 0], f.P[1, 1])), 1) if f.ready else None,
             'fix': self.fix_xy if time.monotonic() - self.fix_t < self.gnss_timeout else None,
             'sigma': self.fix_sigma,
             'wifi': [round(v, 1) for v in self.wifi] if time.monotonic() - self.wifi_t < 120.0 else None})))
