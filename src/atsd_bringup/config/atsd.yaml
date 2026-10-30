@@ -29,7 +29,7 @@ nav_node:
     roads_file: /opt/atsd/data/roads.json    # граф дорог и origin GPS, снимается road_mark
     map_frame: map
     odom_frame: odom
-    v_max: 0.5
+    v_max: 0.8                 # м/с, ровная скорость рейса (Brain пропускает до V_CRUISE в прошивке)
     arrive_m: 0.3              # до точки вдоль дороги, м
     lane_timeout_s: 0.5
     gnss_timeout_s: 2.0

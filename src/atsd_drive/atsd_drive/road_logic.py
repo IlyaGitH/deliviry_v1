@@ -210,8 +210,9 @@ class PoseFilter:
 
 @dataclass
 class FollowCfg:
-    v_max: float = 0.5
+    v_max: float = 0.8          # едем ровно с этой скоростью; меньше — только в крутом повороте и у точки
     w_max: float = 1.0
+    w_smooth: float = 0.5       # сглаживание руля: доля нового значения за такт 0,1 с
     lane_look: float = 1.5      # точка прицеливания на полосе, м
     route_look: float = 2.5     # точка прицеливания на маршруте, м
     switch_m: float = 2.0       # узел пройден, если ближе
@@ -230,9 +231,11 @@ class Follower:
         self.path = []
         self.i = 0
         self.mode = 'idle'
+        self.w_prev = 0.0
 
     def start(self, path):
         self.path, self.i, self.mode = [tuple(p) for p in path], 0, 'start'
+        self.w_prev = 0.0
 
     def segment(self):
         a, b = self.path[self.i], self.path[self.i + 1]
@@ -308,9 +311,13 @@ class Follower:
             self.mode = 'creep'
             return c.creep_v, 0.0, False
 
-        v = c.v_max / (1 + 1.5 * abs(k))
+        # скорость постоянная: дрожание оценки места не должно дёргать газ. Сбавляем, только если
+        # поворот круче, чем позволяет w_max, и на последних метрах — чтобы встать на точку
+        v = min(c.v_max, c.w_max / abs(k)) if k else c.v_max
         v = min(v, max(0.15, 0.4 * math.dist(p, self.path[-1])))
         w = max(-c.w_max, min(c.w_max, v * k))
+        w = self.w_prev + c.w_smooth * (w - self.w_prev)
+        self.w_prev = w
         return v, w, False
 
 

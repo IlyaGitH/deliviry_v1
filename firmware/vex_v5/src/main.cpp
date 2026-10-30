@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.4"
+#define FW_VERSION "3.0.5"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -46,7 +46,7 @@ const double GYRO_SPIKE_STRAIGHT_W = 1.2;
 const double GYRO_BIAS_TAU_S  = 2.0;   // за сколько секунд покоя выучивается уход гироскопа
 const double STILL_ENC_MM     = 0.2;   // колесо сдвинулось меньше за такт 10 мс — стоим
 
-const double V_CRUISE   = 550.0;
+const double V_CRUISE   = 800.0;   // мм/с — потолок скорости рейса; саму скорость задаёт Pi (v_max)
 const double V_MAX_EXT  = 900.0;
 const double V_CREEP    = 70.0;
 const double V_CORNER   = 220.0;
