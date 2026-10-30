@@ -14,6 +14,7 @@ def generate_launch_description():
     use_gnss   = LaunchConfiguration('use_gnss')
     use_ble    = LaunchConfiguration('use_ble')
     use_wifi   = LaunchConfiguration('use_wifi_locator')
+    use_imu    = LaunchConfiguration('use_imu')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_lidar',  default_value='true'),
@@ -21,6 +22,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_gnss',   default_value='true'),
         DeclareLaunchArgument('use_ble',    default_value='true'),
         DeclareLaunchArgument('use_wifi_locator', default_value='true'),
+        DeclareLaunchArgument('use_imu', default_value='true'),
 
         Node(package='atsd_sensors', executable='lidar_node',
              name='lidar_node', parameters=[cfg],
@@ -42,6 +44,11 @@ def generate_launch_description():
              name='ble_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=5.0,
              condition=IfCondition(use_ble)),
+
+        Node(package='atsd_sensors', executable='imu_node',
+             name='imu_node', parameters=[cfg],
+             output='screen', respawn=True, respawn_delay=3.0,
+             condition=IfCondition(use_imu)),
 
         Node(package='atsd_sensors', executable='wifi_node',
              name='wifi_node', parameters=[cfg],

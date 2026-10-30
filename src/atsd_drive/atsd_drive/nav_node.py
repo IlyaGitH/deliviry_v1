@@ -11,7 +11,7 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformS
     TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
-from sensor_msgs.msg import NavSatFix, NavSatStatus
+from sensor_msgs.msg import Imu, NavSatFix, NavSatStatus
 from std_msgs.msg import Float32, String
 from tf2_ros import TransformBroadcaster
 
@@ -70,6 +70,7 @@ class NavNode(Node):
         self.create_subscription(String, 'perception/lane', self.on_lane, 10)
         self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.on_initialpose, 5)
         self.create_subscription(NavSatFix, 'wifi/fix', self.on_wifi, 5)
+        self.create_subscription(Imu, 'imu/data', self.on_imu, 50)
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.publish_status)
 
@@ -82,6 +83,7 @@ class NavNode(Node):
         self.fix_t = 0.0
         self.fix_xy, self.fix_sigma = None, None
         self.wifi, self.wifi_t = None, 0.0  # (x, y, точность) по Wi-Fi, свежая 2 мин
+        self.imu_yaw, self.imu_rate, self.imu_t, self.imu_prev = None, 0.0, 0.0, None  # курс гироскопа
         self.last_plan_pub = 0.0
         self.get_logger().info(f'Езда по дороге: граф {self.roads_file}, точки {self.points_file}')
 
@@ -103,15 +105,28 @@ class NavNode(Node):
         self.origin = tuple(data['origin']) if data.get('origin') else None
         self.get_logger().info(f'Граф дорог: {len(self.nav.roads.nodes)} узлов, origin {self.origin}')
 
+    def on_imu(self, msg: Imu):
+        self.imu_yaw, self.imu_rate = yaw_of(msg.orientation), msg.angular_velocity.z
+        self.imu_t = time.monotonic()
+
+    def imu_fresh(self):
+        return self.imu_yaw is not None and time.monotonic() - self.imu_t < 0.3
+
     def on_odom(self, msg: Odometry):
         pos = msg.pose.pose.position
         cur = (pos.x, pos.y, yaw_of(msg.pose.pose.orientation))
         self.w_odom = msg.twist.twist.angular.z
+        imu = self.imu_yaw if self.imu_fresh() else None
         if self.odom is not None:
             dx, dy = cur[0] - self.odom[0], cur[1] - self.odom[1]
             ds = dx * math.cos(self.odom[2]) + dy * math.sin(self.odom[2])
-            self.nav.filter.predict(ds, wrap(cur[2] - self.odom[2]))
-        self.odom = cur
+            # путь — колёса, поворот — гироскоп, если он есть: колёса в поворотах проскальзывают
+            if imu is not None and self.imu_prev is not None:
+                dyaw, self.nav.filter.yaw_err = wrap(imu - self.imu_prev), 0.02
+            else:
+                dyaw, self.nav.filter.yaw_err = wrap(cur[2] - self.odom[2]), 0.05
+            self.nav.filter.predict(ds, dyaw)
+        self.odom, self.imu_prev = cur, imu
 
     def on_fix(self, msg: NavSatFix):
         if msg.status.status < NavSatStatus.STATUS_FIX or self.origin is None:
@@ -142,7 +157,8 @@ class NavNode(Node):
 
     def on_vel(self, msg: TwistWithCovarianceStamped):
         ve, vn = msg.twist.twist.linear.x, msg.twist.twist.linear.y
-        self.nav.course(math.atan2(vn, ve), math.hypot(ve, vn), abs(self.w_odom) > 0.2)
+        w = self.imu_rate if self.imu_fresh() else self.w_odom
+        self.nav.course(math.atan2(vn, ve), math.hypot(ve, vn), abs(w) > 0.2)
 
     def on_lane(self, msg: String):
         parts = msg.data.split()
@@ -271,7 +287,7 @@ class NavNode(Node):
         self.pub_status.publish(String(data=json.dumps({
             'gnss': f.gnss, 'mode': self.nav.follower.mode if self.nav.active else 'idle',
             'lane': self.lane['lines'] if lane_on and self.lane else 0,
-            'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready),
+            'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready), 'imu': self.imu_fresh(),
             # для отладочной страницы: оценка и сырой GPS в метрах карты
             'pose': [round(float(v), 3) for v in f.X] if f.ready else None,
             'sigma_xy': round(math.sqrt(max(f.P[0, 0], f.P[1, 1])), 1) if f.ready else None,

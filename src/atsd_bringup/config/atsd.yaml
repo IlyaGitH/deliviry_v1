@@ -1,5 +1,5 @@
 # АТСД-1М · параметры всех узлов
-# USB: V5 /dev/v5, лидар /dev/lidar, камера /dev/camera · UART: GNSS /dev/gnss · I2C: X1202 0x36
+# USB: V5 /dev/v5, лидар /dev/lidar, камера /dev/camera · UART: GNSS /dev/gnss · I2C: X1202 0x36, MPU-6050 0x68
 # GPIO: 18 фары, 13 лента, 19 замок, 26 зуммер, 27 геркон · 6 и 16 заняты X1202
 
 v5_bridge:
@@ -152,6 +152,17 @@ ble_node:
     lost_s: 4.0
     rate_hz: 2.0
     adapter: hci0
+
+imu_node:
+  ros__parameters:
+    i2c_bus: 1               # GY-521: VCC 3,3 В (пин 1), GND (пин 6), SDA GPIO2 (пин 3), SCL GPIO3 (пин 5)
+    address: 0x68            # 0x69, если AD0 платы на 3,3 В
+    rate_hz: 200.0
+    gyro_range_dps: 500      # ±250 при ударах о стыки зашкаливает
+    dlpf_hz: 41              # фильтр тряски: 250, 184, 92, 41, 20, 10, 5
+    yaw_axis: z              # ось вверх: плата лежит ровно — z, стоит на ребре — x или y
+    yaw_sign: 1.0            # поворот влево должен давать плюс; иначе -1.0
+    yaw_scale: 1.0           # 360 / показанные градусы после полного оборота по метке
 
 wifi_node:
   ros__parameters:

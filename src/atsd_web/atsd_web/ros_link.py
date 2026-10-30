@@ -22,6 +22,7 @@ DEFAULT = {
     'lock': {'closed': True, 'busy': False, 'tamper': False},
     'gnss': {'fix': False, 'lat': None, 'lon': None},
     'wifi_geo': None,  # (широта, долгота, точность м) по Wi-Fi
+    'imu_status': '',
     'estop': False,
     'mission': None,
     'obstacle': '',
@@ -238,6 +239,7 @@ class RosLink:
         sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
         sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
         sub(String, '/wifi/status', lambda m: self._log(m.data, 'wifi'), 5)
+        sub(String, '/imu/status', lambda m: self._set(['imu_status'], m.data), 5)
         sub(NavSatFix, '/wifi/fix', lambda m: self._set(
             ['wifi_geo'], (m.latitude, m.longitude, m.position_covariance[0] ** 0.5)), 5)
         sub(String, '/perception/lane', lambda m: self._set(['lane'], m.data), 5)

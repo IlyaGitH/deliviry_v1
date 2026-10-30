@@ -89,6 +89,8 @@ function chips(t) {
   if (lane.length >= 4 && lane[0] !== 'none') {
     out.push(chip(`разметка: линий ${lane[3]}, смещение ${(+lane[0] * 100).toFixed(0)} см, угол ${(+lane[1] * 180 / Math.PI).toFixed(1)}°, полоса ${(+lane[2]).toFixed(2)} м`, 'ok'));
   } else out.push(chip('разметки не вижу', 'warn'));
+  if (t.imu_status) out.push(chip(t.imu_status.replace(/^imu /, 'гироскоп '), /ошибка|калибруется/.test(t.imu_status) ? 'warn' : 'ok'));
+  else out.push(chip('гироскопа нет', 'warn'));
   out.push(chip('режим ' + (r.mode || '—')));
   out.push(chip(`${(t.speed || 0).toFixed(2)} м/с`));
   if (t.state) out.push(chip('рейс ' + t.state + (t.pause && t.pause.length ? ' (пауза: ' + t.pause.join(', ') + ')' : '')));

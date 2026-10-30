@@ -223,6 +223,27 @@ def check_gauge():
         report('Гейдж X1202 (I2C 0x36)', False, f'{e} — плата сидит на pogo-контактах?')
 
 
+def check_imu():
+    try:
+        from smbus2 import SMBus
+    except ImportError:
+        report('Гироскоп MPU-6050', None, 'нет smbus2, пропускаю')
+        return
+    for addr in (0x68, 0x69):
+        try:
+            with SMBus(1) as bus:
+                who = bus.read_byte_data(addr, 0x75)
+                bus.write_byte_data(addr, 0x6B, 0x01)
+                raw = bus.read_i2c_block_data(addr, 0x47, 2)
+            gz = ((raw[0] << 8 | raw[1]) - (65536 if raw[0] & 0x80 else 0)) / 131.0
+            chips = {0x68: 'MPU-6050', 0x70: 'MPU-6500', 0x71: 'MPU-9250', 0x73: 'MPU-9255'}
+            report(f'Гироскоп (I2C 0x{addr:02X})', True, f'{chips.get(who, hex(who))}, поворот сейчас {gz:+.1f} °/с')
+            return
+        except OSError:
+            continue
+    report('Гироскоп MPU-6050', False, 'нет на I2C 0x68/0x69 — проверьте SDA GPIO2, SCL GPIO3, питание 3,3 В')
+
+
 def check_gpio(with_lock):
     os.environ.setdefault('GPIOZERO_PIN_FACTORY', 'lgpio')
     try:
@@ -297,6 +318,7 @@ def main():
     check_ble()
     print('\nI2C')
     check_gauge()
+    check_imu()
     if not a.no_gpio:
         print('\nGPIO')
         check_gpio(a.lock)
