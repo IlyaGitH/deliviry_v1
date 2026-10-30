@@ -6,7 +6,7 @@ const fixes = [], track = []; // история за последние ~2 ми�
 let paused = false;
 let view = null;              // {cx, cy, scale} — подбирается сам, колесо/щипок меняют масштаб
 
-let mapImg = null;  // схема Яндекса вокруг origin (как на главной)
+let mapImg = null;  // схема Яндекса вокруг origin (как на главной), светлая
 fetch('/api/config').then(r => r.json()).then(c => {
   CFG = c; view = null;
   const m = (c.maps || {}).map;
@@ -133,12 +133,10 @@ function draw() {
   const meta = (CFG.maps || {}).map;
   if (mapImg && meta) {
     const mpp = meta.meters_per_pixel, [ox, oy] = meta.origin;
-    ctx.filter = 'invert(1) hue-rotate(180deg) brightness(.7) contrast(.9)';
     ctx.drawImage(mapImg, X(ox), Y(oy + mapImg.naturalHeight * mpp), mapImg.naturalWidth * mpp * s, mapImg.naturalHeight * mpp * s);
-    ctx.filter = 'none';
   }
   // сетка 5 м
-  ctx.strokeStyle = '#1f2b33'; ctx.lineWidth = 1;
+  ctx.strokeStyle = mapImg ? 'rgba(0,0,0,.08)' : '#1f2b33'; ctx.lineWidth = 1;
   const step = s * 5 < 20 ? 25 : 5;
   for (let gx = Math.floor((cx - w / 2 / s) / step) * step; X(gx) < w; gx += step) { ctx.beginPath(); ctx.moveTo(X(gx), 0); ctx.lineTo(X(gx), h); ctx.stroke(); }
   for (let gy = Math.floor((cy - h / 2 / s) / step) * step; Y(gy) > 0; gy += step) { ctx.beginPath(); ctx.moveTo(0, Y(gy)); ctx.lineTo(w, Y(gy)); ctx.stroke(); }
@@ -150,7 +148,7 @@ function draw() {
     if (!nodes[a] || !nodes[b]) return;
     ctx.beginPath(); ctx.moveTo(X(nodes[a][0]), Y(nodes[a][1])); ctx.lineTo(X(nodes[b][0]), Y(nodes[b][1])); ctx.stroke();
   });
-  ctx.fillStyle = '#8ba0ad'; ctx.font = '11px sans-serif';
+  ctx.fillStyle = mapImg ? '#0d1418' : '#8ba0ad'; ctx.font = '11px sans-serif';
   Object.entries(nodes).forEach(([id, [x, y]]) => {
     ctx.beginPath(); ctx.arc(X(x), Y(y), 3, 0, 7); ctx.fill();
     ctx.fillText(id, X(x) + 5, Y(y) - 5);

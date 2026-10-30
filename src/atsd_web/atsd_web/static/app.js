@@ -149,15 +149,13 @@ function draw() {
   const meta = CFG.maps[key];
   const img = images[key];
 
-  if (img && img.complete && img.naturalWidth) {
+  const onMap = !!(img && img.complete && img.naturalWidth);  // светлая карта — тёмные линии и подписи
+  if (onMap) {
     const mpp = meta.meters_per_pixel;
     const [ox, oy] = meta.origin;
     const wm = img.naturalWidth * mpp, hm = img.naturalHeight * mpp;
     const [sx, sy] = toScreen(v, ox, oy + hm);
-    // схему Яндекса — в тёмные цвета интерфейса (где canvas filter не поддержан, останется светлой)
-    ctx.filter = key === 'map' ? 'invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)' : 'brightness(.8)';
     ctx.drawImage(img, sx, sy, wm * v.s, hm * v.s);
-    ctx.filter = 'none';
   } else {
     ctx.strokeStyle = '#1b262e';
     ctx.lineWidth = 1;
@@ -174,7 +172,7 @@ function draw() {
 
   // граф дорог (roads.json): по нему строится маршрут
   const roads = CFG.roads || { nodes: {}, edges: [] };
-  ctx.strokeStyle = 'rgba(232,238,242,.28)';
+  ctx.strokeStyle = onMap ? 'rgba(13,20,24,.4)' : 'rgba(232,238,242,.28)';
   ctx.lineWidth = 6; ctx.lineCap = 'round';
   roads.edges.forEach(([a, b]) => {
     const na = roads.nodes[a], nb = roads.nodes[b];
@@ -217,9 +215,12 @@ function draw() {
     ctx.beginPath(); ctx.arc(x, y, isTarget ? 9 : 7, 0, 7); ctx.fill();
     ctx.fillStyle = '#0d1418';
     ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill();
-    ctx.fillStyle = '#e8eef2';
     ctx.font = '600 12px IBM Plex Sans, sans-serif';
     ctx.textAlign = 'center';
+    ctx.lineWidth = 3; ctx.lineJoin = 'round';
+    ctx.strokeStyle = onMap ? 'rgba(255,255,255,.9)' : 'rgba(13,20,24,.9)';  // обводка — читается на любом фоне
+    ctx.strokeText(p.name, x, y - 14);
+    ctx.fillStyle = onMap ? '#0d1418' : '#e8eef2';
     ctx.fillText(p.name, x, y - 14);
   });
 
@@ -233,8 +234,9 @@ function draw() {
     ctx.beginPath();
     ctx.moveTo(15, 0); ctx.lineTo(-9, 9); ctx.lineTo(-4, 0); ctx.lineTo(-9, -9);
     ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#0d1418'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.restore();
-    ctx.strokeStyle = 'rgba(55,200,164,.35)';
+    ctx.strokeStyle = 'rgba(20,140,110,.6)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x, y, 17, 0, 7); ctx.stroke();
   }
