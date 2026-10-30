@@ -109,6 +109,10 @@ class NavNode(Node):
         self.imu_yaw, self.imu_rate = yaw_of(msg.orientation), msg.angular_velocity.z
         self.imu_t = time.monotonic()
 
+    def wifi_fresh(self):
+        # не по одному времени: часы monotonic идут от включения Pi, первые 2 минуты «свежим» был бы None
+        return self.wifi if self.wifi is not None and time.monotonic() - self.wifi_t < 120.0 else None
+
     def imu_fresh(self):
         return self.imu_yaw is not None and time.monotonic() - self.imu_t < 0.3
 
@@ -134,7 +138,7 @@ class NavNode(Node):
         x, y = to_local(msg.latitude, msg.longitude, self.origin)
         sigma = math.sqrt(msg.position_covariance[0]) if msg.position_covariance[0] > 0 else 2.5
         before = self.nav.filter.gnss
-        wifi = self.wifi if time.monotonic() - self.wifi_t < 120.0 else None
+        wifi = self.wifi_fresh()
         state = self.nav.filter.gnss_fix(x, y, max(sigma, 1.0), wifi)
         self.fix_t = time.monotonic()
         self.fix_xy, self.fix_sigma = (round(x, 2), round(y, 2)), round(sigma, 1)
@@ -293,7 +297,7 @@ class NavNode(Node):
             'sigma_xy': round(math.sqrt(max(f.P[0, 0], f.P[1, 1])), 1) if f.ready else None,
             'fix': self.fix_xy if time.monotonic() - self.fix_t < self.gnss_timeout else None,
             'sigma': self.fix_sigma,
-            'wifi': [round(v, 1) for v in self.wifi] if time.monotonic() - self.wifi_t < 120.0 else None})))
+            'wifi': [round(v, 1) for v in w] if (w := self.wifi_fresh()) else None})))
 
 
 def main(args=None):
