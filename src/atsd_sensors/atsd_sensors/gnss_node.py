@@ -51,7 +51,7 @@ class GnssNode(Node):
         self.declare_parameter('frame_id', 'gnss_link')
         self.declare_parameter('min_satellites', 4)
         self.declare_parameter('configure_module', True)
-        self.declare_parameter('nav_rate_hz', 5.0)
+        self.declare_parameter('nav_rate_hz', 1.67)
         self.declare_parameter('save_config', True)
         self.declare_parameter('fix_timeout_s', 3.0)
         self.declare_parameter('uere_m', 2.5)

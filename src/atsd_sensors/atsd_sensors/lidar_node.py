@@ -14,6 +14,8 @@ import serial
 from sensor_msgs.msg import LaserScan
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 
+from atsd_sensors.lidar_logic import bins_from_packets
+
 
 HEADER = 0x54
 VER_LEN = 0x2C
@@ -58,6 +60,8 @@ class LidarNode(Node):
         self.declare_parameter('angle_offset_deg', 0.0)
         self.declare_parameter('check_crc', True)
         self.declare_parameter('crop_deg', [0.0, 0.0])
+        # LD19 крутится 10 раз в секунду; препятствиям хватает каждого второго оборота (при 0,8 м/с — 16 см)
+        self.declare_parameter('publish_every', 2)
 
         p = self.get_parameter
         self.port = p('port').value
@@ -70,6 +74,8 @@ class LidarNode(Node):
         self.invert = bool(p('invert').value)
         self.offset = float(p('angle_offset_deg').value)
         self.check_crc = bool(p('check_crc').value)
+        self.every = max(1, int(p('publish_every').value))
+        self.turns = 0
 
         crop = [float(x) for x in p('crop_deg').value]
         self.crop = [(crop[i], crop[i + 1]) for i in range(0, len(crop) - 1, 2)
@@ -79,7 +85,7 @@ class LidarNode(Node):
                                               qos_profile_sensor_data)
         self.pub_diag = self.create_publisher(DiagnosticArray, '/diagnostics', 5)
 
-        self._pts = []
+        self._raw = []  # (угол начала, угол конца, 36 байт точек) пакетов текущего оборота
         self._acc_deg = 0.0
         self._last_start = None
         self._scan_start = self.get_clock().now()
@@ -161,17 +167,7 @@ class LidarNode(Node):
         self.rpm = speed / 6.0
         self.last_pkt = self.get_clock().now()
 
-        span = (end - start) % 360.0
-        step = span / (POINTS - 1) if POINTS > 1 else 0.0
-
-        for i in range(POINTS):
-            off = 6 + i * 3
-            dist_mm = int.from_bytes(pkt[off:off + 2], 'little')
-            intensity = pkt[off + 2]
-            if dist_mm == 0 or intensity < self.min_intensity:
-                continue
-            self._pts.append(((start + step * i) % 360.0,
-                              dist_mm / 1000.0, float(intensity)))
+        self._raw.append((start, end, pkt[6:6 + 3 * POINTS]))  # разбор — целым оборотом в _build_scan
 
         if self._last_start is not None:
             self._acc_deg += (start - self._last_start) % 360.0
@@ -179,37 +175,24 @@ class LidarNode(Node):
         self._last_start = start
 
         if (wrapped and self._acc_deg > 180.0) or self._acc_deg > 400.0 \
-                or len(self._pts) > 3000:
+                or len(self._raw) > 250:
             self._build_scan()
 
     def _build_scan(self):
         now = self.get_clock().now()
         scan_time = (now - self._scan_start).nanoseconds * 1e-9
-        pts, self._pts = self._pts, []
+        raw, self._raw = self._raw, []
         self._acc_deg = 0.0
         self._scan_start = now
 
-        if not (0.03 < scan_time < 0.5) or len(pts) < 40:
+        self.turns += 1
+        if not (0.03 < scan_time < 0.5) or len(raw) < 4 or self.turns % self.every:
             return
 
         n = self.bins
-        inf = float('inf')
-        ranges = [inf] * n
-        intens = [0.0] * n
-
-        for raw_ang, dist, q in pts:
-            a = -raw_ang if self.invert else raw_ang
-            a = (a + self.offset + 180.0) % 360.0 - 180.0
-            if self._cropped(a):
-                continue
-            if dist < self.range_min or dist > self.range_max:
-                continue
-            idx = int((a + 180.0) / 360.0 * n)
-            if idx >= n:
-                idx = n - 1
-            if dist < ranges[idx]:
-                ranges[idx] = dist
-                intens[idx] = q
+        ranges, intens, npts = bins_from_packets(
+            [r[0] for r in raw], [r[1] for r in raw], [r[2] for r in raw], n, self.invert, self.offset,
+            self.range_min, self.range_max, self.min_intensity, self.crop)
 
         msg = LaserScan()
         msg.header.stamp = (now - Duration(seconds=scan_time)).to_msg()
@@ -221,23 +204,13 @@ class LidarNode(Node):
         msg.scan_time = scan_time
         msg.range_min = self.range_min
         msg.range_max = self.range_max
-        msg.ranges = ranges
-        msg.intensities = intens
+        msg.ranges = ranges.tolist()
+        msg.intensities = intens.tolist()
 
         self.scans += 1
-        self.last_points = len(pts)
+        self.last_points = npts
         with self._lock:
             self._queue.append(msg)
-
-    def _cropped(self, ang_deg: float) -> bool:
-        for lo, hi in self.crop:
-            if lo <= hi:
-                if lo <= ang_deg <= hi:
-                    return True
-            else:
-                if ang_deg >= lo or ang_deg <= hi:
-                    return True
-        return False
 
     def _drain(self):
         while True:

@@ -357,6 +357,12 @@ class V5BridgeNode(Node):
                                         f'Brain встанет на паузу')
         if ok:
             self.send(proto.cmd_heartbeat())
+        # лидар даёт скан 5 раз в секунду, Brain забывает препятствие через 0,4 с: один потерянный скан —
+        # и он бы тронулся. Пока препятствие свежее (0,6 с), повторяем его сами
+        if self.last_obst_text not in ('', 'O 0\n') and now - self.feed_seen['obstacle'] < 0.6 \
+                and now - self.last_obst_sent > 0.15:
+            self.last_obst_sent = now
+            self.send(self.last_obst_text)
 
     def on_cmd_vel(self, msg: Twist):
         self.cmd_lin = msg.linear.x
