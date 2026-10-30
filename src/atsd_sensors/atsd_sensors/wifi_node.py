@@ -24,6 +24,9 @@ class WifiNode(Node):
         d = self.declare_parameter
         d('iface', 'wlan0')
         d('period_s', 20.0)
+        # полное сканирование уводит Wi-Fi с канала на секунды: страницы и видео в это время стоят.
+        # Делаем его редко, в промежутках — только готовые списки драйвера и NetworkManager
+        d('active_scan_s', 120.0)
         d('key_file', '/etc/atsd/locator.key')
         d('min_aps', 2)
         d('yandex_api', 'yandex')  # yandex — api.lbs.yandex.net, yandex_v1 — новая версия Локатора
@@ -31,6 +34,7 @@ class WifiNode(Node):
         d('budget_file', '/opt/atsd/data/locator_budget.json')
         p = lambda n: self.get_parameter(n).value
         self.iface, self.period, self.min_aps = p('iface'), float(p('period_s')), int(p('min_aps'))
+        self.active_every, self.last_active = float(p('active_scan_s')), -1e9
         try:
             with open(p('key_file'), encoding='utf-8') as f:
                 self.key = f.read().strip()
@@ -56,23 +60,27 @@ class WifiNode(Node):
 
     def scan(self):
         """Точки вокруг и почему список мог быть неполным ('' — всё хорошо)."""
-        # полное сканирование драйвером, от root по правилу /etc/sudoers.d/atsd-wifi-scan;
-        # на Pi обходит все каналы 2,4 и 5 ГГц — бывает дольше 15 с
-        try:
-            d = subprocess.run(['sudo', '-n', '/usr/sbin/iw', 'dev', self.iface, 'scan'],
-                               capture_output=True, text=True, timeout=40)
-            if d.returncode == 0:
-                return parse_iw(d.stdout), ''
-            err = (d.stderr.strip().splitlines() or ['?'])[-1][:80]
-        except subprocess.TimeoutExpired:
-            err = 'iw scan дольше 40 с'
-        except FileNotFoundError:
-            err = 'нет iw или sudo'
-        # запасной путь: NetworkManager (в режиме точки доступа — только его кэш) и кэш драйвера
-        cmd = ['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface]
-        r = subprocess.run(cmd + ['--rescan', 'yes'], capture_output=True, text=True, timeout=30)
-        if r.returncode != 0:
-            r = subprocess.run(cmd + ['--rescan', 'no'], capture_output=True, text=True, timeout=10)
+        ap_mode = subprocess.run(['nmcli', '-g', 'GENERAL.CONNECTION', 'dev', 'show', self.iface],
+                                 capture_output=True, text=True, timeout=5).stdout.strip() == 'atsd-hotspot'
+        now = time.monotonic()
+        # своя точка доступа: сканировать нельзя — клиенты (ноутбук оператора) потеряли бы связь
+        if not ap_mode and now - self.last_active >= self.active_every:
+            self.last_active = now
+            try:  # полное сканирование драйвером, от root по правилу /etc/sudoers.d/atsd-wifi-scan
+                d = subprocess.run(['sudo', '-n', '/usr/sbin/iw', 'dev', self.iface, 'scan'],
+                                   capture_output=True, text=True, timeout=40)
+                if d.returncode == 0:
+                    return parse_iw(d.stdout), ''
+                err = (d.stderr.strip().splitlines() or ['?'])[-1][:80]
+            except subprocess.TimeoutExpired:
+                err = 'iw scan дольше 40 с'
+            except FileNotFoundError:
+                err = 'нет iw или sudo'
+        else:
+            err = 'режим точки доступа — только старый список' if ap_mode else ''
+        # между полными сканированиями — то, что драйвер и NetworkManager уже знают (эфир не трогаем)
+        r = subprocess.run(['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface,
+                            '--rescan', 'no'], capture_output=True, text=True, timeout=10)
         found = parse_nmcli(r.stdout) if r.returncode == 0 else []
         try:
             d = subprocess.run(['iw', 'dev', self.iface, 'scan', 'dump'], capture_output=True, text=True, timeout=10)

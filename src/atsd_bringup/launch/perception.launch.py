@@ -14,7 +14,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_vision', default_value='true'),
         Node(package='atsd_perception', executable='obstacle_node', name='obstacle_node',
              parameters=[cfg], output='screen', respawn=True, respawn_delay=2.0),
+        # зрение — самое прожорливое: уступает ядра препятствиям, мосту к Brain, навигации и вебу
         Node(package='atsd_perception', executable='vision_node', name='vision_node',
-             parameters=[cfg], output='screen', respawn=True, respawn_delay=5.0,
+             parameters=[cfg], output='screen', respawn=True, respawn_delay=5.0, prefix='nice -n 10',
              condition=IfCondition(use_vision)),
     ])

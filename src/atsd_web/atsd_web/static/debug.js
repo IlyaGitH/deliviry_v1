@@ -192,6 +192,6 @@ function draw() {
     }
   }
   ctx.fillStyle = '#8ba0ad'; ctx.fillText(`сетка ${step} м · колесо — масштаб, двойной клик — сброс`, 8, h - 8);
-  requestAnimationFrame(draw);
+  setTimeout(() => requestAnimationFrame(draw), 100);  // 10 кадров/с хватает, телефону легче
 }
 requestAnimationFrame(draw);

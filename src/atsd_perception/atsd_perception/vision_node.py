@@ -29,13 +29,14 @@ class VisionNode(Node):
         d('device', '/dev/camera')
         d('width', 640)
         d('height', 480)
-        d('fps', 30)
+        d('fps', 15)        # больше не нужно: разметка — 8 раз в секунду, каждый кадр MJPEG ещё и распаковывать
         d('model_path', '/opt/atsd/models/signs_ncnn_model')
         d('backend', 'auto')
-        d('threads', 3)
+        d('threads', 2)
         d('imgsz', 640)
         d('conf', 0.5)
-        d('infer_hz', 8.0)
+        d('infer_hz', 8.0)   # разметка и красная метка
+        d('yolo_hz', 3.0)    # знаки и светофор: кадр YOLO на Pi 5 — 0,15–0,25 с, чаще — съест все ядра
         d('focal_px', 460.0)
         d('camera_to_front_m', 0.07)
         d('sign_height_m', 0.30)
@@ -49,6 +50,7 @@ class VisionNode(Node):
         d('max_sign_distance_m', 6.0)
         d('light_lost_s', 2.0)
         d('debug_image_hz', 2.0)
+        d('debug_image_scale', 0.75)
         d('hsv_s_min', 90)
         d('hsv_v_min', 140)
         d('spot_enabled', True)
@@ -85,7 +87,11 @@ class VisionNode(Node):
         self.last_light_seen = 0.0
         self.last_n_sent = 0.0
         self.debug_period = 1.0 / max(float(p('debug_image_hz')), 0.1)
+        self.debug_scale = float(p('debug_image_scale'))
         self.last_debug = 0.0
+        self.yolo_period = 1.0 / max(float(p('yolo_hz')), 0.1)
+        self.last_yolo = 0.0
+        self.dets = []  # последние находки YOLO — для отладочной картинки между прогонами
 
         self.pub_sign = self.create_publisher(String, 'perception/sign', 10)
         self.pub_light = self.create_publisher(String, 'perception/light', 10)
@@ -211,12 +217,17 @@ class VisionNode(Node):
             self.last_spot = spot
             self.pub_spot.publish(String(
                 data=f'{spot["x"]:.3f} {spot["y"]:.3f} {spot["area"]:.3f}' if spot else 'none'))
+        now = time.monotonic()
+        if self.model is None or now - self.last_yolo < self.yolo_period:
+            self.publish_debug(frame, self.dets)
+            return
+        self.last_yolo = now
         dets = []
-        if self.model is not None and self.backend == 'ncnn':
+        if self.backend == 'ncnn':
             for det in self.model.predict(frame, conf=float(self.P['conf']), iou=0.45):
                 det['kind'] = self.classes.get(det['cls'])
                 dets.append(det)
-        elif self.model is not None:
+        else:
             res = self.model.predict(frame, imgsz=int(self.P['imgsz']), conf=float(self.P['conf']),
                                      verbose=False)[0]
             names = res.names
@@ -261,6 +272,7 @@ class VisionNode(Node):
         else:
             self.light_conf.update(None)
 
+        self.dets = dets
         if dets:
             self.pub_det.publish(String(data=json.dumps(
                 [{k: v for k, v in d.items() if k not in ('box', 'cls_id')} for d in dets], ensure_ascii=False)))
@@ -336,7 +348,10 @@ class VisionNode(Node):
             cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 2)
             cv2.putText(img, f'spot {self.last_spot["x"]:.2f} {self.last_spot["y"]:+.2f}', (x1, y2 + 14),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 255), 1)
-        ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 60])
+        # для страницы 8090 хватит 480×360: по слабому Wi-Fi полный кадр шёл бы 400 КБ/с
+        img = cv2.resize(img, None, fx=self.debug_scale, fy=self.debug_scale, interpolation=cv2.INTER_AREA) \
+            if self.debug_scale < 1.0 else img
+        ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 50])
         if ok:
             msg = CompressedImage()
             msg.header.stamp = self.get_clock().now().to_msg()

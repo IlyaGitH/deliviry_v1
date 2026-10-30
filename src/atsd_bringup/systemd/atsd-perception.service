@@ -11,7 +11,7 @@ WorkingDirectory=/opt/atsd
 Environment=HOME=/opt/atsd
 Environment=ROS_DOMAIN_ID=17
 Environment=RCUTILS_LOGGING_BUFFERED_STREAM=1
-Environment=OMP_NUM_THREADS=3
+Environment=OMP_NUM_THREADS=2
 Restart=always
 RestartSec=5
 TimeoutStopSec=15

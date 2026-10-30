@@ -101,13 +101,14 @@ vision_node:
     device: /dev/camera
     width: 640
     height: 480
-    fps: 30
+    fps: 15
     model_path: /opt/atsd/models/signs_ncnn_model
     backend: auto            # ncnn без torch; ultralytics — запасной
-    threads: 3
+    threads: 2               # ядра для YOLO; остальные — вебу, навигации, лидару
     imgsz: 640
     conf: 0.5
-    infer_hz: 8.0
+    infer_hz: 8.0            # разметка и красная метка
+    yolo_hz: 3.0             # знаки и светофор (0,8 м/с — кадр каждые 27 см)
     focal_px: 460.0
     camera_to_front_m: 0.07
     sign_height_m: 0.30      # замерить
@@ -120,7 +121,8 @@ vision_node:
     light_confirm: 3
     max_sign_distance_m: 6.0
     light_lost_s: 2.0
-    debug_image_hz: 8.0      # кадр с отрисовкой для отладочной страницы :8090
+    debug_image_hz: 4.0      # кадр с отрисовкой для отладочной страницы :8090, только пока она открыта
+    debug_image_scale: 0.75  # 480×360, JPEG 50 — ~25 КБ на кадр
     hsv_s_min: 90
     hsv_v_min: 140
     spot_enabled: true
@@ -152,12 +154,13 @@ ble_node:
     lost_s: 4.0
     rate_hz: 2.0
     adapter: hci0
+    near_m: 25.0             # ближе к точке — ищем метки постоянно; дальше — 3 с из 30 (BLE мешает Wi-Fi)
 
 imu_node:
   ros__parameters:
     i2c_bus: 1               # GY-521: VCC 3,3 В (пин 1), GND (пин 6), SDA GPIO2 (пин 3), SCL GPIO3 (пин 5)
     address: 0x68            # 0x69, если AD0 платы на 3,3 В
-    rate_hz: 200.0
+    rate_hz: 100.0           # курсу хватает; 200 — лишняя нагрузка на Python
     gyro_range_dps: 500      # ±250 при ударах о стыки зашкаливает
     dlpf_hz: 41              # фильтр тряски: 250, 184, 92, 41, 20, 10, 5
     yaw_axis: z              # ось вверх: плата лежит ровно — z, стоит на ребре — x или y
@@ -168,6 +171,7 @@ wifi_node:
   ros__parameters:
     iface: wlan0
     period_s: 20.0           # раз во сколько секунд спрашивать место по Wi-Fi (нужен интернет)
+    active_scan_s: 120.0     # полное сканирование эфира (на секунды глушит связь с вебом) — не чаще
     key_file: /etc/atsd/locator.key   # ключ Яндекс Локатора; нет файла — бесплатный beaconDB
     min_aps: 2
     yandex_api: yandex       # yandex — api.lbs.yandex.net (ключ «API Локатора» работает здесь); yandex_v1 — новая версия

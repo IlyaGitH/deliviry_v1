@@ -13,6 +13,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -38,7 +39,8 @@ _store_lock = threading.Lock()
 MAP_LAYERS = {'map': ('map', 'png', 'Схема'), 'sat': ('sat', 'jpg', 'Спутник')}
 MAP_ZOOM = int(os.environ.get('ATSD_MAP_ZOOM', '17'))
 MAP_W, MAP_H = 650, 450
-_map_fail = {}  # слой -> когда не удалось скачать: без интернета не тормозим каждую загрузку страницы
+_map_fail = {}    # слой -> когда не удалось скачать: повтор не чаще раза в минуту
+_map_busy = set()  # слои, которые сейчас качаются
 
 
 def map_origin():
@@ -61,8 +63,30 @@ def map_origin():
     return tuple(roads['origin'])
 
 
+def _fetch_map(layer, want, img, meta_file):
+    """Скачать подложку в фоне: страница не ждёт интернета (без него один DNS — до десятков секунд)."""
+    name, ext, label = MAP_LAYERS[layer]
+    url = (f'https://static-maps.yandex.ru/1.x/?ll={want[1]:.7f},{want[0]:.7f}'
+           f'&z={want[2]}&size={MAP_W},{MAP_H}&l={name}&lang=ru_RU')
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            data = r.read()
+        if not data.startswith((b'\x89PNG', b'\xff\xd8')):
+            raise ValueError('не картинка')
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(data)
+        _save(meta_file, want)
+        print(f'Карта Яндекса ({label}) скачана')
+    except (OSError, ValueError) as e:
+        _map_fail[layer] = time.time()
+        print(f'Карта Яндекса ({label}) не скачалась: {e}')
+    finally:
+        _map_busy.discard(layer)
+
+
 def yandex_map(layer):
-    """{'image', 'meters_per_pixel', 'origin' — левый нижний угол в метрах, 'label'} или None."""
+    """{'image', 'meters_per_pixel', 'origin' — левый нижний угол в метрах, 'label'} или None.
+    Нет картинки — запускает скачивание в фоне и сразу отвечает None (страница переспросит)."""
     origin = map_origin()
     if origin is None:
         return None
@@ -71,22 +95,10 @@ def yandex_map(layer):
     meta_file = DATA_DIR / f'yandex_{layer}.json'
     want = [origin[0], origin[1], MAP_ZOOM]
     if _load(meta_file, None) != want or not img.exists():
-        if time.time() - _map_fail.get(layer, 0) < 60:
-            return None
-        url = (f'https://static-maps.yandex.ru/1.x/?ll={origin[1]:.7f},{origin[0]:.7f}'
-               f'&z={MAP_ZOOM}&size={MAP_W},{MAP_H}&l={name}&lang=ru_RU')
-        try:
-            with urllib.request.urlopen(url, timeout=5) as r:
-                data = r.read()
-            if not data.startswith((b'\x89PNG', b'\xff\xd8')):
-                raise ValueError('не картинка')
-        except (OSError, ValueError) as e:
-            _map_fail[layer] = time.time()
-            print(f'Карта Яндекса ({label}) не скачалась: {e}')
-            return None
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        img.write_bytes(data)
-        _save(meta_file, want)
+        if layer not in _map_busy and time.time() - _map_fail.get(layer, 0) > 60:
+            _map_busy.add(layer)
+            threading.Thread(target=_fetch_map, args=(layer, want, img, meta_file), daemon=True).start()
+        return None
     # проекция Яндекса — Меркатор на эллипсоиде: метров в пикселе на широте origin
     lat = math.radians(origin[0])
     mpp = 2 * math.pi * 6378137.0 / (256 * 2 ** MAP_ZOOM) * math.cos(lat) / math.sqrt(1 - 0.00669438 * math.sin(lat) ** 2)
@@ -129,6 +141,7 @@ class OrderIn(BaseModel):
 
 
 app = FastAPI(title='АТСД-1М', docs_url=None, redoc_url=None)
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # app.js и ответы API по слабому Wi-Fi — вчетверо меньше
 
 STATIC = Path(__file__).parent / 'static'
 if not STATIC.exists():
@@ -483,6 +496,7 @@ def main(args=None):
         _save(POINTS_FILE, DEFAULT_POINTS)  # nav_node берёт координаты точек отсюда
     link = RosLink(mock=mock, logger=print)
     link.start()
+    threading.Timer(10.0, lambda: [yandex_map(k) for k in MAP_LAYERS]).start()  # подложка заранее, в фоне
     print(f'АТСД-1М · веб-интерфейс на порту {port}{" · режим имитации" if mock else ""}')
     if debug_port:
         # отдельный сервер в своём потоке: сигналы остановки ловит основной, этот уходит вместе с процессом
