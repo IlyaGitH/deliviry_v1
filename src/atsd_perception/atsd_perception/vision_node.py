@@ -29,13 +29,14 @@ class VisionNode(Node):
         d('device', '/dev/camera')
         d('width', 640)
         d('height', 480)
-        d('fps', 15)        # больше не нужно: разметка — 8 раз в секунду, каждый кадр MJPEG ещё и распаковывать
+        d('fps', 15)        # больше не нужно: разметка — 10 раз в секунду, каждый кадр MJPEG ещё и распаковывать
         d('model_path', '/opt/atsd/models/signs_ncnn_model')
         d('backend', 'auto')
         d('threads', 2)
+        d('opencv_threads', 1)  # не занимать все ядра параллельно NCNN и вебу
         d('imgsz', 640)
         d('conf', 0.5)
-        d('infer_hz', 8.0)   # разметка и красная метка
+        d('infer_hz', 10.0)   # разметка и красная метка
         d('yolo_hz', 3.0)    # знаки и светофор: кадр YOLO на Pi 5 — 0,15–0,25 с, чаще — съест все ядра
         d('focal_px', 460.0)
         d('camera_to_front_m', 0.07)
@@ -49,7 +50,7 @@ class VisionNode(Node):
         d('light_confirm', 3)
         d('max_sign_distance_m', 6.0)
         d('light_lost_s', 2.0)
-        d('debug_image_hz', 2.0)
+        d('debug_image_hz', 10.0)
         d('debug_image_scale', 0.75)
         d('hsv_s_min', 90)
         d('hsv_v_min', 140)
@@ -72,6 +73,8 @@ class VisionNode(Node):
         d('lane_clutter_max', 0.25)
 
         p = lambda n: self.get_parameter(n).value
+        if CV_OK:
+            cv2.setNumThreads(max(1, int(p('opencv_threads'))))
         self.P = {n: p(n) for n in ('device', 'width', 'height', 'fps', 'model_path', 'backend', 'threads',
                                     'imgsz', 'conf',
                                     'focal_px', 'camera_to_front_m', 'sign_height_m', 'light_height_m',
@@ -86,7 +89,7 @@ class VisionNode(Node):
         self.light_conf = Confirm(int(p('light_confirm')), int(p('light_confirm')) + 1)
         self.last_light_seen = 0.0
         self.last_n_sent = 0.0
-        self.debug_period = 1.0 / max(float(p('debug_image_hz')), 0.1)
+        self.debug_period = 1.0 / float(p('debug_image_hz')) if float(p('debug_image_hz')) > 0 else float('inf')
         self.debug_scale = float(p('debug_image_scale'))
         self.last_debug = 0.0
         self.yolo_period = 1.0 / max(float(p('yolo_hz')), 0.1)

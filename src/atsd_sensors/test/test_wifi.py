@@ -79,3 +79,12 @@ def test_budget(tmp_path):
     assert b.take('2026-10-29') and b.take('2026-10-29') and not b.take('2026-10-29')
     assert not Budget(f, 2).take('2026-10-29')        # счёт пережил перезапуск
     assert Budget(f, 2).take('2026-10-30')            # новый день — снова можно
+
+
+def test_scan_requires_station_mode():
+    from atsd_sensors.wifi_logic import scan_allowed
+    assert scan_allowed('Interface wlan0\n\ttype managed\n\tchannel 6 (2437 MHz)\n')
+    for mode in ('AP', 'AP/VLAN', 'monitor', 'P2P-client', ''):
+        assert not scan_allowed(f'Interface wlan0\n\ttype {mode}\n')
+    assert not scan_allowed('')
+    assert not scan_allowed('command failed: No such device')

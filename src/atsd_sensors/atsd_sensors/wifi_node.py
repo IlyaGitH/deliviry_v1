@@ -14,7 +14,7 @@ from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import String
 
 from atsd_sensors.wifi_logic import URL, Budget, parse_iw, parse_nmcli, parse_response, request_body, \
-    same_networks, usable
+    same_networks, usable, scan_allowed
 
 
 class WifiNode(Node):
@@ -60,11 +60,15 @@ class WifiNode(Node):
 
     def scan(self):
         """Точки вокруг и почему список мог быть неполным ('' — всё хорошо)."""
-        ap_mode = subprocess.run(['nmcli', '-g', 'GENERAL.CONNECTION', 'dev', 'show', self.iface],
-                                 capture_output=True, text=True, timeout=5).stdout.strip() == 'atsd-hotspot'
+        # Проверяем реальный режим интерфейса, а не имя профиля NM: точку
+        # могли поднять вручную. При неизвестном режиме эфир не трогаем.
+        mode = subprocess.run(['iw', 'dev', self.iface, 'info'],
+                              capture_output=True, text=True, timeout=5)
+        if mode.returncode != 0 or not scan_allowed(mode.stdout):
+            return [], 'точка доступа или режим неизвестен — геолокация приостановлена'
         now = time.monotonic()
         # своя точка доступа: сканировать нельзя — клиенты (ноутбук оператора) потеряли бы связь
-        if not ap_mode and now - self.last_active >= self.active_every:
+        if now - self.last_active >= self.active_every:
             self.last_active = now
             try:  # полное сканирование драйвером, от root по правилу /etc/sudoers.d/atsd-wifi-scan
                 d = subprocess.run(['sudo', '-n', '/usr/sbin/iw', 'dev', self.iface, 'scan'],
@@ -77,7 +81,7 @@ class WifiNode(Node):
             except FileNotFoundError:
                 err = 'нет iw или sudo'
         else:
-            err = 'режим точки доступа — только старый список' if ap_mode else ''
+            err = ''
         # между полными сканированиями — то, что драйвер и NetworkManager уже знают (эфир не трогаем)
         r = subprocess.run(['nmcli', '-t', '-f', 'BSSID,SIGNAL,SSID', 'dev', 'wifi', 'list', 'ifname', self.iface,
                             '--rescan', 'no'], capture_output=True, text=True, timeout=10)

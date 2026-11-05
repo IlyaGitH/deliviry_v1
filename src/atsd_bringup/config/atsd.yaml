@@ -104,10 +104,11 @@ vision_node:
     fps: 15
     model_path: /opt/atsd/models/signs_ncnn_model
     backend: auto            # ncnn без torch; ultralytics — запасной
+    opencv_threads: 1       # оставить ядра для веба и ROS; потоки NCNN заданы отдельно
     threads: 2               # ядра для YOLO; остальные — вебу, навигации, лидару
     imgsz: 640
     conf: 0.5
-    infer_hz: 8.0            # разметка и красная метка
+    infer_hz: 10.0            # разметка и красная метка
     yolo_hz: 3.0             # знаки и светофор (0,8 м/с — кадр каждые 27 см)
     focal_px: 460.0
     camera_to_front_m: 0.07
@@ -121,7 +122,7 @@ vision_node:
     light_confirm: 3
     max_sign_distance_m: 6.0
     light_lost_s: 2.0
-    debug_image_hz: 4.0      # кадр с отрисовкой для отладочной страницы :8090, только пока она открыта
+    debug_image_hz: 10.0      # кадр с отрисовкой для отладочной страницы :8090, 0 — отключить публикацию
     debug_image_scale: 0.75  # 480×360, JPEG 50 — ~25 КБ на кадр
     hsv_s_min: 90
     hsv_v_min: 140

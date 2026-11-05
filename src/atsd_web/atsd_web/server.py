@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from atsd_web.ros_link import RosLink
 
@@ -440,36 +441,48 @@ def api_report(oid: str):
     }
 
 
+def status_payload():
+    """Disk access and order transitions run outside the ASGI event loop."""
+    # Multiple viewers must not advance/write the same order concurrently.
+    with _status_lock:
+        tele = link.snapshot()
+        order = active_order()
+        if order is None:
+            order = display_order()
+        else:
+            data = orders()
+            for o in data:
+                if o['id'] == order['id']:
+                    if advance(o, tele):
+                        save_orders(data)
+                    order = o
+                    break
+        events = tele.pop('events', [])
+        return {'ts': time.time(), 'telemetry': tele,
+                'order': order_view(order, tele), 'points': points(), 'events': events}
+
+
+_status_lock = threading.Lock()
+
+
 @app.websocket('/ws')
 async def ws(sock: WebSocket):
     await sock.accept()
+    seq = 0
     try:
         while True:
-            tele = link.snapshot()
-            order = active_order()
-            if order is None:
-                order = display_order()
-            elif order:
-                data = orders()
-                for o in data:
-                    if o['id'] == order['id']:
-                        if advance(o, tele):
-                            save_orders(data)
-                        order = o
-                        break
-            events = tele.pop('events', [])
-            await sock.send_json({
-                'ts': time.time(),
-                'telemetry': tele,
-                'order': order_view(order, tele),
-                'points': points(),
-                'events': events,
-            })
+            payload = await run_in_threadpool(status_payload)
+            # History on connection, then only new events; slow clients never queue snapshots.
+            events = [e for e in payload['events'] if e['seq'] > seq]
+            payload['events'] = events
+            await asyncio.wait_for(sock.send_json(payload), timeout=3.0)
+            if events:
+                seq = events[-1]['seq']
             await asyncio.sleep(0.2)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
         pass
-    except Exception:
-        pass
+    except asyncio.TimeoutError:
+        await sock.close(code=1013)
 
 
 def main(args=None):

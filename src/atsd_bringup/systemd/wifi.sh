@@ -9,6 +9,8 @@ IFACE=wlan0
 AP_SSID=ATSD-1M
 AP_PASS=
 AP_ADDR=10.42.0.1/24
+AP_BAND=bg     # a — 5 ГГц, если поддерживают клиенты и разрешает регион
+AP_CHANNEL=0   # 0 — выбор NetworkManager; иначе фиксированный канал
 WAIT_S=60
 STABLE_S=30     # связь считается, только если продержалась столько подряд
 MIN_SIGNAL=25   # % сигнала известной сети; слабее — как будто её нет
@@ -34,7 +36,8 @@ start_ap() {
   # Профиль пересоздаём каждый раз, чтобы правки wifi.conf применялись без ручной чистки
   nmcli con delete "${AP}" >/dev/null 2>&1
   nmcli con add type wifi ifname "${IFACE}" con-name "${AP}" autoconnect no ssid "${AP_SSID}" \
-        802-11-wireless.mode ap 802-11-wireless.band bg \
+        802-11-wireless.mode ap 802-11-wireless.band "${AP_BAND}" 802-11-wireless.channel "${AP_CHANNEL}" \
+        802-11-wireless.powersave 2 \
         ipv4.method shared ipv4.addresses "${AP_ADDR}" ipv6.method disabled \
         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn \
         wifi-sec.pairwise ccmp wifi-sec.group ccmp wifi-sec.psk "${AP_PASS}" >/dev/null &&

@@ -224,6 +224,8 @@ if [[ ! -f /etc/atsd/wifi.conf ]]; then
 AP_SSID=ATSD-1M
 AP_PASS=${AP_PASS_NEW}
 AP_ADDR=10.42.0.1/24
+AP_BAND=bg
+AP_CHANNEL=0
 WAIT_S=60
 IFACE=wlan0
 WIFICONF

@@ -7,8 +7,10 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 
 debug_app = FastAPI(title='АТСД-1М · отладка', docs_url=None, redoc_url=None)
+debug_app.add_middleware(GZipMiddleware, minimum_size=1000)
 _ctx = {}
 
 
@@ -64,7 +66,7 @@ async def ws(sock: WebSocket):
                 seq = lines[-1]['seq']
             _, jpg, age = link.frame()
             m = t.get('mission') or {}
-            await sock.send_json({
+            await asyncio.wait_for(sock.send_json({
                 'ts': time.time(),
                 'connected': t['connected'], 'brain_link': t['brain_link'],
                 'pose': t['pose'], 'speed': t['speed'], 'road': t['road'], 'plan': t['plan'],
@@ -73,7 +75,9 @@ async def ws(sock: WebSocket):
                 'obstacle': t['obstacle'], 'state': m.get('state'), 'pause': m.get('pause', []),
                 'frame_age': round(age, 1) if jpg is not None else None,
                 'lines': lines,
-            })
+            }), timeout=3.0)
             await asyncio.sleep(0.25)
     except (WebSocketDisconnect, RuntimeError):
         pass
+    except asyncio.TimeoutError:
+        await sock.close(code=1013)

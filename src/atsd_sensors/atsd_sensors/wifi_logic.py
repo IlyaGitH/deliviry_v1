@@ -119,3 +119,8 @@ class Budget:
         except OSError:
             pass  # не записали — посчитаем заново после перезапуска, не страшно
         return True
+
+
+def scan_allowed(interface_info):
+    """Active scans only on a confirmed station interface (`iw dev IFACE info`)."""
+    return re.search(r'^\s*type managed\s*$', interface_info, re.MULTILINE) is not None

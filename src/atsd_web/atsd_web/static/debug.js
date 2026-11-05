@@ -20,8 +20,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function camLoop() {
   let seq = -1, url = null;
   for (;;) {
+    if (document.hidden) { await sleep(1000); continue; }
+    const started = performance.now();
     try {
-      const r = await fetch(`/frame.jpg?after=${seq}`, { cache: 'no-store' });
+      const r = await fetch(`/frame.jpg?after=${seq}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       if (r.status !== 200) { await sleep(500); continue; }
       seq = +r.headers.get('X-Seq');
       const next = URL.createObjectURL(await r.blob());
@@ -29,6 +31,7 @@ async function camLoop() {
       await cam.decode().catch(() => {});
       if (url) URL.revokeObjectURL(url);
       url = next;
+      await sleep(Math.max(0, 100 - (performance.now() - started)));
     } catch (e) { await sleep(1000); }
   }
 }
@@ -46,7 +49,6 @@ function log(ts, kind, text) {
   d.textContent = `${hhmmss(ts)} ${text}`;
   con.appendChild(d);
   while (con.childElementCount > MAX_LINES) con.firstChild.remove();
-  if ($('auto').checked) con.scrollTop = con.scrollHeight;
 }
 $('pause').onclick = e => { paused = !paused; e.target.textContent = paused ? 'Продолжить' : 'Пауза'; };
 $('clear').onclick = () => { con.textContent = ''; };
@@ -70,6 +72,7 @@ function connect() {
     T = t;
     t.lines.forEach(l => log(l.ts, l.kind, l.text));
     if (t.ts - lastSummary >= 1) { lastSummary = t.ts; log(t.ts, 'state', summary(t)); }
+    if (!paused && $('auto').checked) con.scrollTop = con.scrollHeight;
     const r = t.road || {};
     const now = t.ts;
     if (r.fix) remember(fixes, [r.fix[0], r.fix[1], r.sigma || 2.5, now]);
