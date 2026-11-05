@@ -9,7 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 import serial
-from geometry_msgs.msg import Twist, TransformStamped, Quaternion
+from geometry_msgs.msg import Twist, TwistStamped, TransformStamped, Quaternion
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, Empty, Float32, String
@@ -130,7 +130,7 @@ class V5BridgeNode(Node):
         self.create_subscription(String, 'perception/obstacle', self.on_obstacle, 10)
         self.create_subscription(Twist, 'cmd_nudge', self.on_nudge, 10)
         self.create_subscription(String, 'ble/zone', self.on_zone, 10)
-        self.create_subscription(Twist, 'nav/cmd_vel', self.on_nav_cmd, 10)
+        self.create_subscription(TwistStamped, 'nav/checked_cmd_vel', self.on_nav_cmd, 1)
         self.create_subscription(String, 'nav/result', self.on_nav_result, 10)
         self.create_subscription(Float32, 'nav/remain', lambda m: setattr(self, 'nav_remain', m.data), 10)
 
@@ -467,9 +467,13 @@ class V5BridgeNode(Node):
     def traveling(self):
         return self.last_status is not None and self.last_status.state in proto.TRAVEL_STATES
 
-    def on_nav_cmd(self, msg: Twist):
+    def on_nav_cmd(self, msg: TwistStamped):
         if self.traveling():
-            self.send(proto.cmd_nav(msg.linear.x, msg.angular.z))
+            age = self.get_clock().now().nanoseconds * 1e-9 - (msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
+            v, w = msg.twist.linear.x, msg.twist.angular.z
+            if msg.header.frame_id != 'base_link' or not proto.nav_command_fresh(age, v, w):
+                v = w = 0.0
+            self.send(proto.cmd_nav(v, w))
 
     def on_nav_result(self, msg: String):
         parts = msg.data.split()

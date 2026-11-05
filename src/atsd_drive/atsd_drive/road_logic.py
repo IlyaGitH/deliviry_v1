@@ -286,7 +286,7 @@ class Follower:
             i += 1
         return np.asarray(self.path[-1])
 
-    def step(self, pose, yaw_known, lane):
+    def step(self, pose, yaw_known, lane, strict_arrival=False):
         """pose (x, y, курс), lane — словарь от камеры или None. -> (v, w, приехал?)."""
         c = self.cfg
         p = pose[:2]
@@ -299,10 +299,11 @@ class Follower:
         p0, bearing = self.segment()
         nxt = self.path[self.i + 1]
         last_seg = self.i == len(self.path) - 2
-        # приехал: на последнем отрезке до точки вдоль дороги меньше arrive_m. Вдоль, а не по прямой:
-        # постоянный сдвиг GPS вбок на пару метров не должен мешать остановиться
-        side = abs(-math.sin(bearing) * (p[0] - p0[0]) + math.cos(bearing) * (p[1] - p0[1]))
-        if math.dist(p, self.path[-1]) < c.arrive_m or (last_seg and self.remain(p) < c.arrive_m and side < 3.0):
+        # A detour can pass the goal's projection while metres off the road.
+        # nav_node uses strict arrival: proximity to the actual destination.
+        side = abs(-math.sin(bearing)*(p[0]-p0[0]) + math.cos(bearing)*(p[1]-p0[1]))
+        projected_arrival = not strict_arrival and last_seg and self.remain(p) < c.arrive_m and side < 3.0
+        if math.dist(p, self.path[-1]) < c.arrive_m or projected_arrival:
             self.mode = 'arrived'
             return 0.0, 0.0, True
         at_junction = (not last_seg and math.dist(p, nxt) < c.junction_m) or \
@@ -372,18 +373,20 @@ class RoadNav:
         if self.filter.gnss == 'ok' and speed > 0.3 and not turning:
             self.filter.heading(yaw, max(math.radians(3), 0.05 / speed))
 
-    def tick(self, lane):
+    def tick(self, lane, correct_lane=True, strict_arrival=False):
         """10 раз в секунду: -> (v, w, приехал?)."""
         f = self.filter
         if not self.active or not f.ready:
             return 0.0, 0.0, False
+        if not correct_lane:
+            lane, self.last_lane, self.lane_age = None, None, 5
         fresh = lane is not None
         if fresh:
             self.last_lane, self.lane_age = lane, 0
         elif self.lane_age < 5:  # разметка пропала на миг (блик, пешеход) — держим последнюю, до 0,5 с
             lane, self.lane_age = self.last_lane, self.lane_age + 1
-        v, w, done = self.follower.step(f.X, f.yaw_known, lane)
-        if fresh and not f.manual and self.follower.mode == 'lane' and f.yaw_known:
+        v, w, done = self.follower.step(f.X, f.yaw_known, lane, strict_arrival=strict_arrival)
+        if correct_lane and fresh and not f.manual and self.follower.mode == 'lane' and f.yaw_known:
             # разметка точнее GPS поперёк дороги и по курсу: робот на оси полосы, полоса вдоль дороги
             p0, bearing = self.follower.segment()
             f.heading(bearing - lane['angle'], math.radians(3))

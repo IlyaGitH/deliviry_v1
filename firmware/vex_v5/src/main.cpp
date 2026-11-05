@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.6"
+#define FW_VERSION "3.0.7"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -83,13 +83,10 @@ const double   BUMP_ZONE_MM         = 1800.0;
 const double   BUMP_FACTOR          = 0.35;
 const double   LIGHT_STOP_OFFSET_MM = 450.0;
 
-// Объезд делает Nav2, здесь последний рубеж: ближе OBST_STOP_MM вперёд не ехать
+// Объезд делает локальный планировщик Pi, здесь последний рубеж: ближе OBST_STOP_MM вперёд не ехать
 const double   OBST_SLOW_MM        = 1800.0;
 const double   OBST_STOP_MM        = 450.0;
 const uint32_t OBST_MSG_TIMEOUT_MS = 400;
-// Упёрлись вплотную дольше этого — отъезжаем назад на REC_BACK_MM. 0 — не отъезжать, ждать:
-// на дороге препятствие (человек, машина) уходит само, а объезжать по разметке некуда
-const uint32_t OBST_BACKOFF_MS     = 0;
 
 const uint32_t LINK_TIMEOUT_MS   = 500;
 const uint32_t V_WATCHDOG_MS     = 300;
@@ -97,9 +94,6 @@ const double   STALL_CMD_RPM     = 25.0;
 const double   STALL_MEAS_RPM    = 6.0;
 const double   STALL_CURRENT_A   = 1.6;
 const uint32_t STALL_TIME_MS     = 700;
-const double   REC_BACK_MM       = 250.0;
-const uint32_t REC_TIMEOUT_MS    = 3000;
-const int      REC_MAX           = 3;
 const double   TEMP_HOT_C        = 55.0;
 const double   TEMP_CRIT_C       = 65.0;
 const int      BATT_LOW_PCT      = 20;
@@ -190,7 +184,6 @@ struct Mission {
   int from = -1, to = -1, goal = -1;
   uint32_t t0 = 0, t1 = 0;
   bool returnAfter = false;
-  int recCount = 0;
   char faultMsg[24] = "";
 } ms;
 
@@ -202,7 +195,6 @@ double zoneCrossEnd = -1, zoneBumpEnd = -1;
 struct Light { bool red = false; double stopAt = 0; char last = 'N'; } tLight;
 struct Obst { int dist = 0; char side = '?'; uint32_t last = 0; } obst;
 struct ObstWait { bool active = false; uint32_t blockSince = 0; } obstWait;
-struct Recovery { bool active = false; double startTrip = 0, yaw = 0; uint32_t t0 = 0; } rec;
 struct NavCmd { double v = 0, w = 0; uint32_t last = 0, idleSince = 0; } nav;
 struct Zone { int node = -1; int rssi = -127; bool near = false; uint32_t last = 0; } zone;
 struct Nudge { double v = 0, w = 0; uint32_t last = 0; bool active = false; } nudge;
@@ -306,7 +298,6 @@ static void resetTravelBehaviours() {
   stopSign = StopSign();
   tLight = Light();
   obstWait = ObstWait();
-  rec = Recovery();
   nav = NavCmd();
   nav.idleSince = nowMs();
 }
@@ -485,20 +476,29 @@ static void stopAll() {
   for (int i = 0; i < 6; i++) { MOT[i].m->stop(brakeType::brake); rpmCmd[i] = 0; }
 }
 
+// The ramp must stay on the lidar-checked curvature, including a curved stop.
+static double travelArcOutput(double targetV, double targetW, double previousV,
+                              double previousW, double outputV) {
+  double k = fabs(targetV) > 1.0 ? targetW / targetV :
+             (fabs(previousV) > 1.0 ? previousW / previousV : 0.0);
+  k = fmax(-1.0 / 300.0, fmin(1.0 / 300.0, k));
+  return outputV * k;
+}
+
 static void applyDrive(double vT, double wT, double dt) {
+  static bool checkedArc = false;
+  const double oldV = vOut, oldW = wOut;
+  if (ms.st == MS_TO_PICKUP || ms.st == MS_TO_DROP || ms.st == MS_RETURN) checkedArc = true;
+  else if (fabs(vT) > 1.0 || fabs(wT) > 0.01) checkedArc = false;
   bool speedingUp = fabs(vT) > fabs(vOut) && vT * vOut >= 0;
   double a = speedingUp ? cfg::ACCEL : cfg::DECEL;
   vOut += clampd(vT - vOut, -a * dt, a * dt);
   wOut += clampd(wT - wOut, -cfg::W_ACCEL * dt, cfg::W_ACCEL * dt);
 
   bool idle = fabs(vT) < 1.0 && fabs(wT) < 0.01 && fabs(vOut) < 4.0 && fabs(wOut) < 0.03;
-  if (idle) { vOut = 0; wOut = 0; stopAll(); return; }
+  if (idle) { vOut = 0; wOut = 0; checkedArc = false; stopAll(); return; }
 
-  // В рейсе не превращать дугу в разворот при разгоне/торможении.
-  if (ms.st == MS_TO_PICKUP || ms.st == MS_TO_DROP || ms.st == MS_RETURN) {
-    const double maxArcW = fabs(vOut) / 300.0;  // минимум 0,3 м; Pi задаёт больший радиус
-    wOut = clampd(wOut, -maxArcW, maxArcW);
-  }
+  if (checkedArc) wOut = travelArcOutput(vT, wT, oldV, oldW, vOut);
   double vl = vOut - wOut * cfg::TRACK_EFF_MM * 0.5;
   double vr = vOut + wOut * cfg::TRACK_EFF_MM * 0.5;
   double rl = vl * RPM_PER_MM_S, rr = vr * RPM_PER_MM_S;
@@ -532,7 +532,6 @@ static void missionFault(const char* why) {
   if (isTravel(ms.st)) ms.faultFrom = ms.st;
   strncpy(ms.faultMsg, why, sizeof(ms.faultMsg) - 1);
   ms.faultMsg[sizeof(ms.faultMsg) - 1] = 0;
-  rec.active = false;
   setState(MS_FAULT);
   logEvent("FAULT %s", why);
 }
@@ -552,7 +551,6 @@ static void startMission(int a, int b) {
   test.kind = T_NONE;
   ms.from = a; ms.to = b;
   ms.t0 = nowMs(); ms.t1 = 0;
-  ms.recCount = 0;
   zoneCrossEnd = zoneBumpEnd = -1;
   logEvent("MISSION_START %s %s", NODES[a].name, NODES[b].name);
   startLeg(MS_TO_PICKUP, a);
@@ -568,7 +566,6 @@ static void checkZone(int node) {
 }
 
 static void arrivedAtGoal() {
-  ms.recCount = 0;
   checkZone(ms.goal);
   stopSign.pending = stopSign.holding = false;
   obstWait.active = false;
@@ -607,29 +604,16 @@ static void confirmCargo() {
 
 static void resumeMission() {
   if (ms.st != MS_FAULT || !isTravel(ms.faultFrom)) { logEvent("IGNORED_U"); return; }
-  ms.recCount = 0;
   startLeg(ms.faultFrom, ms.goal);
-}
-
-static void startRecovery(const char* why) {
-  if (rec.active) return;
-  ms.recCount++;
-  if (ms.recCount > cfg::REC_MAX) { missionFault("STUCK"); return; }
-  rec.active = true;
-  rec.startTrip = tripMm;
-  rec.yaw = pose.yaw;
-  rec.t0 = nowMs();
-  hl.stallSince = 0; hl.stall = false;
-  logEvent("RECOVERY %d %s", ms.recCount, why);
 }
 
 static bool obstPresent() { return obst.dist > 0 && (nowMs() - obst.last) < cfg::OBST_MSG_TIMEOUT_MS; }
 
-// Едет по скорости от Nav2 (G), накладывая паузы и ограничения рейса.
+// Едет по проверенной Pi скорости (G), накладывая паузы и ограничения рейса.
 // Прибытие (Y) и отказ навигации (Q) тоже приходят с Pi.
 // Сохраняем кривизну при снижении скорости и полностью останавливаем дугу у препятствия.
 static void constrainTravelArc(double requestedV, double& v, double& w, bool blocked) {
-  if (requestedV > 0 && v < requestedV) w *= v / requestedV;
+  if (fabs(requestedV) > 0 && fabs(v) < fabs(requestedV)) w *= v / requestedV;
   if (blocked && requestedV >= 0) { v = 0; w = 0; }
 }
 
@@ -640,23 +624,9 @@ static void travelTick(double& v, double& w) {
 
   if (hl.sideDead) { missionFault("SIDE_MOTORS_DEAD"); return; }
 
-  if (rec.active) {
-    pauseMask |= P_REC;
-    double back = tripMm - rec.startTrip;
-    bool timeout = (now - rec.t0) > cfg::REC_TIMEOUT_MS;
-    if (hl.stall && (now - rec.t0) > 800) { missionFault("STUCK_BACK"); return; }
-    if (back >= cfg::REC_BACK_MM || timeout) {
-      rec.active = false;
-      nav.idleSince = now;
-      if (timeout && back < 50) missionFault("STUCK_BACK");
-      return;
-    }
-    v = -cfg::V_BACKUP;
-    w = clampd(cfg::KP_HOLD * wrapPi(rec.yaw - pose.yaw), -cfg::W_MAX, cfg::W_MAX);
-    return;
-  }
-
-  if (hl.stall || hl.bump) { startRecovery(hl.bump ? "BUMPER" : "STALL"); return; }
+  // A bumper or stalled drivetrain is not evidence that the rear is clear.
+  // Only Pi's lidar-checked planner may request reverse travel. Fault requires resume.
+  if (hl.stall || hl.bump) { missionFault(hl.bump ? "BUMPER" : "STALL"); return; }
 
   double vLim = cfg::V_CRUISE * speedFactor(true);
 
@@ -690,7 +660,7 @@ static void travelTick(double& v, double& w) {
     else vLim = fmin(vLim, fmax(cfg::V_CREEP, sqrt(2.0 * cfg::DECEL_PLAN * rem)));
   }
 
-  // Препятствие не останавливает рейс целиком: Nav2 может развернуться или сдать назад
+  // Препятствие не останавливает рейс целиком: Pi может выбрать свободную дугу или сдать назад
   bool obstBlock = false;
   if (obstPresent()) {
     if (obst.dist <= cfg::OBST_STOP_MM + 50) {
@@ -703,14 +673,6 @@ static void travelTick(double& v, double& w) {
   } else if (obstWait.active) {
     obstWait.active = false;
     logEvent("OBSTACLE_CLEAR");
-  }
-
-  if (!obstBlock) obstWait.blockSince = 0;
-  else if (!obstWait.blockSince) obstWait.blockSince = now ? now : 1;
-  else if (cfg::OBST_BACKOFF_MS && !pauseMask && now - obstWait.blockSince > cfg::OBST_BACKOFF_MS) {
-    obstWait.blockSince = 0;
-    startRecovery("OBSTACLE");
-    return;
   }
 
   bool navFresh = nav.last != 0 && (now - nav.last) < cfg::NAV_CMD_TIMEOUT_MS;
@@ -872,11 +834,11 @@ static void handleLine(char* line, bool local) {
     } else if (s != 'N') ok = false;
     if (ok) tLight.last = s;
   } else if (!strcmp(c, "N") && n >= 3) {
-    if (isTravel(ms.st) && !estop) {
-      nudge.v = clampd(atof(tok[1]), -cfg::V_NUDGE_MAX, cfg::V_NUDGE_MAX);
-      nudge.w = clampd(atof(tok[2]) / 1000.0, -cfg::W_NUDGE_MAX, cfg::W_NUDGE_MAX);
-      nudge.last = now;
-      if (!nudge.active) { nudge.active = true; logEvent("NUDGE_ON"); }
+    // Adding a nudge would invalidate the footprint checked by the Pi planner.
+    // End/pause autonomous travel before manual steering.
+    nudge.active = false;
+    if (isTravel(ms.st) && now-nudge.last > 1000) {
+      nudge.last = now; logEvent("NUDGE_REJECTED_CHECKED_PATH");
     }
   } else if (!strcmp(c, "B") && n >= 3) {
     int nd = atoi(tok[1]);
@@ -925,7 +887,6 @@ static uint32_t statusFlags() {
   if (hl.battPct < cfg::BATT_LOW_PCT) f |= 1u << 8;
   if (isBusy(ms.st))  f |= 1u << 9;
   if (pauseMask)      f |= 1u << 10;
-  if (rec.active)     f |= 1u << 12;
   if (ms.st == MS_FAULT) f |= 1u << 13;
   if (Ctl.ButtonL1.pressing() && !isTravel(ms.st)) f |= 1u << 14;
   if (!piLink.ok)       f |= 1u << 15;
@@ -1252,12 +1213,6 @@ int run() {
       motorTest = testTick(v, w);
     } else if (isTravel(ms.st)) {
       travelTick(v, w);
-      bool nf = nudge.active && (now - nudge.last) < cfg::NUDGE_TIMEOUT_MS;
-      if (nudge.active && !nf) { nudge.active = false; nudge.v = nudge.w = 0; logEvent("NUDGE_OFF"); }
-      if (nf) {
-        v = clampd(v + nudge.v, -cfg::V_NUDGE_MAX, cfg::V_CRUISE);
-        w = clampd(w + nudge.w, -cfg::W_MAX, cfg::W_MAX);
-      }
     } else if (isBusy(ms.st)) {
       pauseMask = 0;
     } else if (now - velCmd.last < cfg::V_WATCHDOG_MS && velCmd.ever) {

@@ -1,0 +1,21 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Симуляция объезда ATSD</title>
+<style>body{font:16px system-ui;background:#111c24;color:#e8f0f4;margin:24px;max-width:1100px}canvas{background:#f8fafc;width:100%;border-radius:10px}select,button{font:inherit;padding:8px;margin:5px}input{width:100%}.muted{color:#a9bfcb}#info{min-height:50px}b{color:#72dfc1}</style>
+<h1>Объезд по лидару — симуляция</h1><p>Синий — вперёд; оранжевый — назад. Зелёная точка — старт, красная — цель. Прямоугольник показывает корпус 75 × 50 см.</p>
+<select id="cases"></select><button id="play">▶ Воспроизвести</button><span id="info"></span>
+<canvas id="view" width="1050" height="640"></canvas><input id="time" type="range" min="0" step="1" value="0"><p id="result"></p>
+<p class="muted">2D-модель: лидар 360° / 455 лучей / 5 Гц, команды 10 Гц, идеальная одометрия, ускорение и торможение 0,35 м/с². Есть геометрическая проверка столкновений и передняя блокировка Brain. Пробуксовка, ямы, высота препятствий и реальный ROS/USB не моделируются. Успех здесь не гарантирует проезд на роботе.</p>
+<script>
+const data=__DATA__;
+const labels={open:'Свободная дорога',box:'Препятствие на пути',left_blocked:'Слева закрыто',right_blocked:'Справа закрыто',slalom:'Два препятствия',wide_passage:'Широкий проход',narrow_passage:'Недостаточно места',dead_end:'П-образный тупик',enclosed:'Замкнутое пространство',rear_blocked:'Заблокированы перед и зад',reverse_arc:'Откат с поворотом',scan_loss:'Потеря сканов на 2 с',odom_loss:'Потеря одометрии на 2 с',invalid_ranges:'Неизвестные лучи на 2 с',moving_front:'Препятствие появляется и уходит'};
+const select=document.querySelector('#cases'), slider=document.querySelector('#time'), canvas=document.querySelector('#view'), ctx=canvas.getContext('2d');let running=false;
+data.forEach((r,i)=>select.add(new Option(labels[r.name]||r.name,i)));
+function draw(){const r=data[+select.value],index=+slider.value,t=r.trace[index];const pts=[...r.geometry.flat(),...r.trace.map(t=>[t[1],t[2]]),r.goal];let xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);let minx=Math.min(...xs)-1,maxx=Math.max(...xs)+1,miny=Math.min(...ys)-1,maxy=Math.max(...ys)+1;const scale=Math.min(1000/(maxx-minx),590/(maxy-miny));const xy=p=>[25+(p[0]-minx)*scale,615-(p[1]-miny)*scale];ctx.clearRect(0,0,1050,640);ctx.strokeStyle='#333';ctx.lineWidth=4;
+const geometry=r.snapshots?r.snapshots[index]:r.geometry;for(const [a,b]of geometry){ctx.beginPath();ctx.moveTo(...xy(a));ctx.lineTo(...xy(b));ctx.stroke();}
+ctx.lineWidth=3;for(let i=1;i<=index;i++){ctx.strokeStyle=r.trace[i][4]<0?'#e97025':'#087cce';ctx.beginPath();ctx.moveTo(...xy(r.trace[i-1].slice(1,3)));ctx.lineTo(...xy(r.trace[i].slice(1,3)));ctx.stroke();}
+for(const [p,color]of [[r.start,'#19824c'],[r.goal,'#d33']]){ctx.fillStyle=color;ctx.beginPath();ctx.arc(...xy(p),6,0,7);ctx.fill();}
+const [x,y]=xy(t.slice(1,3));ctx.save();ctx.translate(x,y);ctx.rotate(-t[3]);ctx.fillStyle='#248d8daa';ctx.strokeStyle='#114f51';ctx.lineWidth=2;ctx.fillRect(-.4*scale,-.25*scale,.75*scale,.5*scale);ctx.strokeRect(-.4*scale,-.25*scale,.75*scale,.5*scale);ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(.5*scale,0);ctx.stroke();ctx.restore();
+document.querySelector('#info').textContent=` ${t[0].toFixed(1)} с · ${t[4].toFixed(2)} м/с · ${t[6]}`;
+document.querySelector('#result').textContent=`Результат: ${r.outcome}; столкновение: ${r.collision?'ДА':'нет'}; откат: ${r.reverse_m} м; до цели: ${r.end_distance} м. Расчёт p95: ${r.plan_ms_p95} мс (облачная машина).`;}
+function reset(){running=false;document.querySelector('#play').textContent='▶ Воспроизвести';slider.max=data[+select.value].trace.length-1;slider.value=0;draw();}select.onchange=reset;slider.oninput=draw;
+document.querySelector('#play').onclick=()=>{running=!running;document.querySelector('#play').textContent=running?'⏸ Пауза':'▶ Воспроизвести';};setInterval(()=>{if(running){if(+slider.value>=+slider.max){running=false;return;}slider.value=+slider.value+1;draw();}},50);reset();
+</script></html>

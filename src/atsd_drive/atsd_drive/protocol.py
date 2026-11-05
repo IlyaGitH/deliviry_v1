@@ -234,3 +234,8 @@ def parse_obstacle_msg(text: str):
     depth = float(parts[2]) if len(parts) > 2 else 0.0
     offset = float(parts[3]) if len(parts) > 3 else 0.0
     return dist, side, depth, offset
+
+
+def nav_command_fresh(age, v, w):
+    """Queueing/delayed DDS delivery must not renew an old movement command."""
+    return all(math.isfinite(x) for x in (age, v, w)) and 0 <= age <= 0.25

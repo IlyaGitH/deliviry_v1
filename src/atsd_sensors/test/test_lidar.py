@@ -39,11 +39,31 @@ def test_matches_point_by_point_parsing():
         args = (list(starts), list(ends), payloads, 455, invert, 7.0, 0.05, 12.0, 20, crop)
         r_new, q_new, _ = bins_from_packets(*args)
         r_ref, q_ref = reference(*args)
-        assert np.array_equal(np.isinf(r_new), np.isinf(r_ref))
-        fin = ~np.isinf(r_ref)
+        fin = np.isfinite(r_new)
+        if not crop:
+            assert np.array_equal(fin, np.isfinite(r_ref))
         assert np.allclose(r_new[fin], r_ref[fin]) and np.allclose(q_new[fin], q_ref[fin])
 
 
 def test_empty():
     r, q, n = bins_from_packets([0.0], [8.8], [bytes(36)], 100)
-    assert np.isinf(r).all() and n == 0
+    assert np.isposinf(r).any() and np.isnan(r).any() and n == 0
+
+
+def test_missing_and_cropped_sectors_are_unknown_not_free():
+    payload = b''.join(struct.pack('<HB', 0, 80) for _ in range(POINTS))
+    ranges, _, _ = bins_from_packets([0.], [20.], [payload], 360, False, crop=((5., 10.),))
+    assert np.isposinf(ranges[181:184]).all()  # received rays without a return
+    assert np.isnan(ranges[185:190]).all()  # deliberately masked
+    assert np.isnan(ranges[:170]).all()  # packet never received
+
+
+def test_low_quality_returns_do_not_authorize_free_space():
+    payload = b''.join(struct.pack('<HB', 500, 1) for _ in range(POINTS))
+    ranges, _, _ = bins_from_packets([0.], [11.], [payload], 360, False, min_q=20)
+    assert np.isnan(ranges[180:192]).all()
+
+
+def test_full_crop_never_becomes_free_inf():
+    ranges, _, _ = bins_from_packets([0.], [20.], [bytes(36)], 360, crop=((-180.,180.),))
+    assert np.isnan(ranges).all()

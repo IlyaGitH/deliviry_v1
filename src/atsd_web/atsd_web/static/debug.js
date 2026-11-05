@@ -110,6 +110,14 @@ function chips(t) {
   if (t.imu_status) out.push(chip(t.imu_status.replace(/^imu /, 'гироскоп '), /ошибка|калибруется/.test(t.imu_status) ? 'warn' : 'ok'));
   else out.push(chip('гироскопа нет', 'warn'));
   out.push(chip('режим ' + (r.mode || '—')));
+  if (r.mode !== 'idle' && r.avoidance) {
+    const states = { following: 'путь свободен', avoid: 'объезд по лидару', gear_stop: 'остановка перед сменой направления',
+      blocked: 'свободного манёвра нет', braking_blocked: 'препятствие на пути торможения',
+      stale_scan: 'нет свежего лидара', stale_odometry: 'нет свежей одометрии', waiting_scan: 'ожидание лидара',
+      stale_after_planning: 'данные устарели', stalled: 'нет движения', escape_timeout: 'объезд не найден', local_goal: 'у цели' };
+    out.push(chip(states[r.avoidance] || 'остановка планировщика', ['following', 'avoid'].includes(r.avoidance) ? 'ok' : 'warn'));
+    if (r.reverse_m > 0) out.push(chip(`откат ${r.reverse_m.toFixed(2)} м`));
+  }
   out.push(chip(`${(t.speed || 0).toFixed(2)} м/с`));
   if (t.state) out.push(chip('рейс ' + t.state + (t.pause && t.pause.length ? ' (пауза: ' + t.pause.join(', ') + ')' : '')));
   if (t.obstacle) out.push(chip(t.obstacle, /свобод/.test(t.obstacle) ? 'ok' : 'bad'));

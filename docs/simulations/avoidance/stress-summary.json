@@ -1,0 +1,239 @@
+[
+  {
+    "name": "random_box_0",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.277,
+    "reverse_m": 0.0,
+    "sim_seconds": 22.5,
+    "states": {
+      "following": 1,
+      "avoid": 225
+    },
+    "plan_ms_p95": 41.43,
+    "plan_ms_max": 44.77,
+    "start": [
+      0.0,
+      0.0,
+      -0.1427249288243069
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_1",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.299,
+    "reverse_m": 0.0,
+    "sim_seconds": 21.3,
+    "states": {
+      "following": 10,
+      "avoid": 204
+    },
+    "plan_ms_p95": 35.22,
+    "plan_ms_max": 45.6,
+    "start": [
+      0.0,
+      0.0,
+      -0.04250004590689496
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_2",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.294,
+    "reverse_m": 0.0,
+    "sim_seconds": 23.0,
+    "states": {
+      "following": 6,
+      "avoid": 225
+    },
+    "plan_ms_p95": 30.92,
+    "plan_ms_max": 45.77,
+    "start": [
+      0.0,
+      0.0,
+      0.08431444644428546
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_3",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.283,
+    "reverse_m": 0.358,
+    "sim_seconds": 26.6,
+    "states": {
+      "avoid": 256,
+      "gear_stop": 11
+    },
+    "plan_ms_p95": 41.17,
+    "plan_ms_max": 44.4,
+    "start": [
+      0.0,
+      0.0,
+      -0.13227398055553266
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_4",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.289,
+    "reverse_m": 0.0,
+    "sim_seconds": 20.7,
+    "states": {
+      "avoid": 173,
+      "following": 35
+    },
+    "plan_ms_p95": 40.52,
+    "plan_ms_max": 43.86,
+    "start": [
+      0.0,
+      0.0,
+      -0.07806241282518601
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_5",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.285,
+    "reverse_m": 0.0,
+    "sim_seconds": 22.2,
+    "states": {
+      "avoid": 223
+    },
+    "plan_ms_p95": 41.24,
+    "plan_ms_max": 43.89,
+    "start": [
+      0.0,
+      0.0,
+      0.12380860306151856
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_6",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.29,
+    "reverse_m": 0.0,
+    "sim_seconds": 20.3,
+    "states": {
+      "avoid": 178,
+      "following": 26
+    },
+    "plan_ms_p95": 41.23,
+    "plan_ms_max": 43.74,
+    "start": [
+      0.0,
+      0.0,
+      0.020328221996372964
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_7",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.281,
+    "reverse_m": 0.0,
+    "sim_seconds": 21.3,
+    "states": {
+      "following": 8,
+      "avoid": 206
+    },
+    "plan_ms_p95": 29.93,
+    "plan_ms_max": 44.48,
+    "start": [
+      0.0,
+      0.0,
+      0.08964450922215639
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_8",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.279,
+    "reverse_m": 0.0,
+    "sim_seconds": 24.3,
+    "states": {
+      "avoid": 244
+    },
+    "plan_ms_p95": 41.3,
+    "plan_ms_max": 43.55,
+    "start": [
+      0.0,
+      0.0,
+      -0.02912890719528957
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  },
+  {
+    "name": "random_box_9",
+    "outcome": "arrived",
+    "reached": true,
+    "collision": false,
+    "end_distance": 0.282,
+    "reverse_m": 0.0,
+    "sim_seconds": 22.1,
+    "states": {
+      "avoid": 222
+    },
+    "plan_ms_p95": 34.97,
+    "plan_ms_max": 43.12,
+    "start": [
+      0.0,
+      0.0,
+      0.0457523478504549
+    ],
+    "goal": [
+      5.0,
+      0.0
+    ]
+  }
+]

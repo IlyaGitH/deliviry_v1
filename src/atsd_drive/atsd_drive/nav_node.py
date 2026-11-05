@@ -7,15 +7,17 @@ import os
 import time
 
 import rclpy
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformStamped, Twist, \
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, TransformStamped, TwistStamped, \
     TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, NavSatFix, NavSatStatus
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Imu, LaserScan, NavSatFix, NavSatStatus
 from std_msgs.msg import Float32, String
 from tf2_ros import TransformBroadcaster
 
 from atsd_drive.nav_logic import find_point, want_leg
+from atsd_drive.local_planner import LocalCfg, LocalPlanner, ScanSpace, Decision, relative_pose
 from atsd_drive.road_logic import FollowCfg, RoadNav, Roads, to_local, wrap
 
 
@@ -44,6 +46,19 @@ class NavNode(Node):
         d('arrive_m', 0.3)
         d('turn_radius_m', 1.0)
         d('turn_speed_m_s', 0.25)
+        d('local_allow_reverse', True)
+        d('robot_front_m', 0.35)
+        d('robot_rear_m', 0.40)
+        d('robot_half_width_m', 0.25)
+        d('obstacle_margin_m', 0.12)
+        d('avoid_speed_m_s', 0.25)
+        d('reverse_speed_m_s', 0.15)
+        d('reverse_limit_m', 3.0)
+        d('blocked_timeout_s', 30.0)
+        d('laser_x', 0.29)
+        d('laser_y', 0.0)
+        d('laser_yaw_deg', 0.0)
+        d('laser_frame', 'laser_frame')
         d('lane_timeout_s', 0.5)
         d('gnss_timeout_s', 2.0)
         d('no_position_timeout_s', 20.0)
@@ -57,9 +72,22 @@ class NavNode(Node):
         self.nav = RoadNav(Roads(), FollowCfg(v_max=float(p('v_max')), arrive_m=float(p('arrive_m')),
             turn_radius=max(0.3, float(p('turn_radius_m'))),
             turn_speed=max(0.05, float(p('turn_speed_m_s')))))
+        self.local = LocalPlanner(LocalCfg(
+            front=float(p('robot_front_m')), rear=float(p('robot_rear_m')),
+            half_width=float(p('robot_half_width_m')), margin=float(p('obstacle_margin_m')),
+            radius=float(p('turn_radius_m')), allow_reverse=bool(p('local_allow_reverse')),
+            forward_speed=float(p('avoid_speed_m_s')), reverse_speed=float(p('reverse_speed_m_s')),
+            max_reverse_m=float(p('reverse_limit_m'))))
+        self.laser = (float(p('laser_x')), float(p('laser_y')), math.radians(float(p('laser_yaw_deg'))))
+        self.laser_frame = p('laser_frame')
+        self.space, self.scan_pose, self.scan_t = None, None, 0.0
+        self.odom_t, self.v_odom = 0.0, 0.0
+        self.avoidance = Decision()
+        self.blocked_since = None
+        self.blocked_timeout = float(p('blocked_timeout_s'))
         self.load_roads()
 
-        self.pub_cmd = self.create_publisher(Twist, 'nav/cmd_vel', 10)
+        self.pub_cmd = self.create_publisher(TwistStamped, 'nav/checked_cmd_vel', 1)
         self.pub_result = self.create_publisher(String, 'nav/result', 10)
         self.pub_remain = self.create_publisher(Float32, 'nav/remain', 10)
         self.pub_event = self.create_publisher(String, 'mission/event', 20)
@@ -75,6 +103,7 @@ class NavNode(Node):
         self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.on_initialpose, 5)
         self.create_subscription(NavSatFix, 'wifi/fix', self.on_wifi, 5)
         self.create_subscription(Imu, 'imu/data', self.on_imu, 50)
+        self.create_subscription(LaserScan, 'scan', self.on_scan, qos_profile_sensor_data)
         self.create_timer(0.1, self.tick)
         self.create_timer(0.5, self.publish_status)
 
@@ -124,6 +153,7 @@ class NavNode(Node):
         pos = msg.pose.pose.position
         cur = (pos.x, pos.y, yaw_of(msg.pose.pose.orientation))
         self.w_odom = msg.twist.twist.angular.z
+        self.v_odom, self.odom_t = msg.twist.twist.linear.x, time.monotonic()
         imu = self.imu_yaw if self.imu_fresh() else None
         if self.odom is not None:
             dx, dy = cur[0] - self.odom[0], cur[1] - self.odom[1]
@@ -135,6 +165,23 @@ class NavNode(Node):
                 dyaw, self.nav.filter.yaw_err = wrap(cur[2] - self.odom[2]), 0.05
             self.nav.filter.predict(ds, dyaw)
         self.odom, self.imu_prev = cur, imu
+
+    def on_scan(self, msg: LaserScan):
+        now = time.monotonic()
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        age = self.get_clock().now().nanoseconds * 1e-9 - stamp
+        # Reject delayed/wrong-frame scans rather than treating receipt as freshness.
+        if (self.odom is None or now-self.odom_t > self.local.cfg.odom_timeout or
+                msg.header.frame_id != self.laser_frame or not 0 <= age <= self.local.cfg.scan_timeout):
+            return
+        self.space = ScanSpace(msg.ranges, msg.angle_min, msg.angle_increment,
+                               msg.range_min, msg.range_max, self.local.cfg, self.laser)
+        self.scan_pose, self.scan_t = tuple(self.odom), now-age
+
+    def reset_local(self):
+        self.local.reset()
+        self.blocked_since = None
+        self.avoidance = Decision()
 
     def on_fix(self, msg: NavSatFix):
         if msg.status.status < NavSatStatus.STATUS_FIX or self.origin is None:
@@ -177,8 +224,10 @@ class NavNode(Node):
 
     def on_initialpose(self, msg: PoseWithCovarianceStamped):
         pos = msg.pose.pose.position
-        self.pub_cmd.publish(Twist())
+        self.publish_command()
         self.nav.filter.set_manual(pos.x, pos.y, yaw_of(msg.pose.pose.orientation))
+        self.reset_local()
+        self.space, self.scan_pose = None, None
         self.odom = None  # не применять дельту, накопленную до установки позиции
         self.imu_prev = None
         self.result = None
@@ -201,7 +250,8 @@ class NavNode(Node):
         if leg == self.leg:
             return
         self.nav.stop()
-        self.pub_cmd.publish(Twist())
+        self.publish_command()
+        self.reset_local()
         self.leg, self.leg_t = leg, time.monotonic()
         if leg:
             self.try_plan()
@@ -240,20 +290,63 @@ class NavNode(Node):
                 self.finish(False, 'no_position')
             return
         lane = self.lane if now - self.lane_t < self.lane_timeout else None
-        v, w, done = self.nav.tick(lane)
-        cmd = Twist()
-        cmd.linear.x, cmd.angular.z = v, w
-        self.pub_cmd.publish(cmd)
-        self.pub_remain.publish(Float32(data=float(self.nav.follower.remain(self.nav.filter.X[:2]))))
+        # During a detour lane/map corrections would pull the estimated robot
+        # sideways back onto the road. Odometry/IMU continue normally.
+        detouring = self.local.mode == 'avoid'
+        v, w, done = self.nav.tick(lane, correct_lane=not detouring, strict_arrival=True)
         if done:
             self.finish(True)
-        elif now - self.last_plan_pub > 2.0:
+            return
+        decision = Decision(state='waiting_scan')
+        if self.space is not None and self.scan_pose is not None and self.odom is not None:
+            current = relative_pose(self.odom, self.scan_pose)
+            # Convert the road goal through CURRENT world pose into the odometry
+            # scan frame. GPS/manual map corrections cannot move old lidar cells.
+            goal_world = self.nav.follower._lookahead(self.nav.filter.X[:2], 4.5)
+            goal_body = relative_pose((*goal_world, 0.), self.nav.filter.X)
+            c, sn = math.cos(current[2]), math.sin(current[2])
+            goal_scan = (current[0]+c*goal_body[0]-sn*goal_body[1],
+                         current[1]+sn*goal_body[0]+c*goal_body[1])
+            p0, bearing = self.nav.follower.segment()
+            side = abs(-math.sin(bearing)*(self.nav.filter.X[0]-p0[0]) +
+                       math.cos(bearing)*(self.nav.filter.X[1]-p0[1]))
+            rejoined = side < .25 and abs(wrap(self.nav.filter.X[2]-bearing)) < .15
+            decision = self.local.decide(self.space, current, goal_scan, now, now-self.scan_t,
+                                         self.v_odom, self.w_odom, now-self.odom_t, self.odom,
+                                         preferred=(v, w) if not detouring or rejoined else None)
+        # Planning consumes time too: do not freshly stamp an expired observation.
+        checked_now = time.monotonic()
+        if decision.v and (checked_now-self.scan_t > self.local.cfg.scan_timeout or
+                           checked_now-self.odom_t > self.local.cfg.odom_timeout):
+            decision = Decision(state='stale_after_planning')
+            self.local.command = (0., 0.)
+        self.avoidance = decision
+        moving = abs(decision.v) > 0.01
+        if moving:
+            self.blocked_since = None
+        elif self.blocked_since is None:
+            self.blocked_since = now
+        if decision.state in ('stalled', 'escape_timeout') or (self.blocked_since is not None and
+                                         now-self.blocked_since > self.blocked_timeout):
+            self.finish(False, decision.state)
+            return
+        v, w = decision.v, decision.w
+        self.publish_command(v, w)
+        self.pub_remain.publish(Float32(data=float(self.nav.follower.remain(self.nav.filter.X[:2]))))
+        if now - self.last_plan_pub > 2.0:
             self.publish_plan()
+
+    def publish_command(self, v=0., w=0.):
+        cmd = TwistStamped()
+        cmd.header.stamp = self.get_clock().now().to_msg()
+        cmd.header.frame_id = 'base_link'
+        cmd.twist.linear.x, cmd.twist.angular.z = float(v), float(w)
+        self.pub_cmd.publish(cmd)
 
     def finish(self, ok, why=''):
         leg = self.leg
         self.nav.stop()
-        self.pub_cmd.publish(Twist())
+        self.publish_command()
         self.leg = None
         self.result = (leg, ok)
         self.publish_result()
@@ -302,6 +395,7 @@ class NavNode(Node):
         lane_on = time.monotonic() - self.lane_t < self.lane_timeout
         self.pub_status.publish(String(data=json.dumps({
             'gnss': f.gnss, 'mode': self.nav.follower.mode if self.nav.active else 'idle',
+            'avoidance': self.avoidance.state, 'reverse_m': round(self.local.reverse_distance, 2),
             'lane': self.lane['lines'] if lane_on and self.lane else 0,
             'manual_pose': f.manual, 'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready), 'imu': self.imu_fresh(),
             # для отладочной страницы: оценка и сырой GPS в метрах карты

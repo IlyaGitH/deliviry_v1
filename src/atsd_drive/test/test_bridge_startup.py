@@ -19,7 +19,7 @@ def bridge_module(monkeypatch):
         'rclpy': {'ok': lambda: True},
         'rclpy.node': {'Node': object},
         'rclpy.qos': {k: Message for k in ('QoSProfile', 'ReliabilityPolicy', 'HistoryPolicy', 'DurabilityPolicy')},
-        'geometry_msgs.msg': {k: Message for k in ('Twist', 'TransformStamped', 'Quaternion')},
+        'geometry_msgs.msg': {k: Message for k in ('Twist', 'TwistStamped', 'TransformStamped', 'Quaternion')},
         'nav_msgs.msg': {'Odometry': Message},
         'sensor_msgs.msg': {'BatteryState': Message},
         'std_msgs.msg': {k: Message for k in ('Bool', 'Empty', 'Float32', 'String')},
@@ -81,3 +81,22 @@ def test_reconnect_discards_old_mission_status(bridge_module):
     node.last_rx = 10
     node.close_port()
     assert node.last_status is None and node.last_rx == 0
+
+
+def test_bridge_rejects_delayed_checked_commands(bridge_module):
+    from types import SimpleNamespace as NS
+    node = bridge_module.V5BridgeNode.__new__(bridge_module.V5BridgeNode)
+    node.traveling = lambda: True
+    node.send = Mock()
+    node.get_clock = lambda: NS(now=lambda: NS(nanoseconds=10_000_000_000))
+    msg = NS(header=NS(frame_id='base_link', stamp=NS(sec=9, nanosec=0)),
+             twist=NS(linear=NS(x=-.15), angular=NS(z=.15)))
+    node.on_nav_cmd(msg)
+    node.send.assert_called_with('G 0 0\n')
+    msg.header.stamp = NS(sec=9, nanosec=900_000_000)
+    node.on_nav_cmd(msg)
+    node.send.assert_called_with('G -150 150\n')
+    node.traveling = lambda: False
+    node.send.reset_mock()
+    node.on_nav_cmd(msg)
+    node.send.assert_not_called()

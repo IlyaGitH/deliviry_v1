@@ -30,12 +30,26 @@ nav_node:
     map_frame: map
     odom_frame: odom
     v_max: 0.8                 # м/с, ровная скорость рейса (Brain пропускает до V_CRUISE в прошивке)
-    arrive_m: 0.3              # до точки вдоль дороги, м
+    arrive_m: 0.3              # расстояние до фактической точки, м
     lane_timeout_s: 0.5
     gnss_timeout_s: 2.0
     turn_radius_m: 1.0         # дуга вместо разворота на асфальте
     turn_speed_m_s: 0.25
     no_position_timeout_s: 20.0
+    # Проверенный обзор 360°, включая задний сектор. Размеры уточнить по реальному корпусу.
+    local_allow_reverse: true
+    robot_front_m: 0.35        # от base_link до передней грани
+    robot_rear_m: 0.40         # от base_link до задней грани
+    robot_half_width_m: 0.25
+    obstacle_margin_m: 0.12    # сверх габаритов, плюс запас растрового планирования
+    avoid_speed_m_s: 0.25      # ограничение автономного хода с проверкой лидара
+    reverse_speed_m_s: 0.15
+    reverse_limit_m: 3.0       # максимум суммарного отката за одну попытку объезда
+    blocked_timeout_s: 30.0   # нет допустимой команды — остановка с NAV_FAILED
+    laser_x: 0.29
+    laser_y: 0.0
+    laser_yaw_deg: 0.0
+    laser_frame: laser_frame
 
 light_node:
   ros__parameters:
