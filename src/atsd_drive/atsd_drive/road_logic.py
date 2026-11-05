@@ -84,7 +84,8 @@ class PoseFilter:
         self.P = None
         self.scale_err = scale_err   # ошибка пути по колёсам, доля
         self.yaw_err = yaw_err       # ошибка поворота по колёсам, доля
-        self.gnss = 'none'           # none | ok | suspect
+        self.manual = False
+        self.gnss = 'none'           # none | ok | suspect | manual
         self.rejects = 0
         self.consistent = 0
         self.last_fix = None
@@ -101,6 +102,15 @@ class PoseFilter:
     def reset(self, x, y, yaw=None, sig_xy=1.0, sig_yaw=math.radians(5)):
         self.X = np.array([x, y, yaw or 0.0])
         self.P = np.diag([sig_xy ** 2, sig_xy ** 2, sig_yaw ** 2 if yaw is not None else math.pi ** 2])
+
+    def set_manual(self, x, y, yaw):
+        # Operator coordinates are authoritative; motion still comes from odometry/IMU.
+        self.reset(x, y, yaw, 0.5, math.radians(5))
+        self.manual = True
+        self.gnss = 'manual'
+        self.last_fix = None
+        self.rejects = self.consistent = 0
+        self.odo_since_fix = np.zeros(2)
 
     def predict(self, ds, dyaw):
         if not self.ready:
@@ -134,6 +144,8 @@ class PoseFilter:
         """Новый фикс. Возвращает состояние GPS: ok — принят, suspect — не верим.
         wifi — (x, y, точность м) по Wi-Fi: грубо, но подменой GPS не сбить; фикс дальше
         трёх её точностей (не ближе 100 м) — подмена."""
+        if self.manual:
+            return self.gnss
         z = np.array([x, y])
         if wifi is not None and np.linalg.norm(z - wifi[:2]) > max(100.0, 3.0 * wifi[2]):
             self.gnss, self.consistent, self.last_fix = 'suspect', 0, None
@@ -174,6 +186,8 @@ class PoseFilter:
         """Место по Wi-Fi (±десятки метров). Без GPS и «Робот здесь» — старт отсюда; в пути поправляет,
         только если сами знаем место хуже, чем Wi-Fi: его ошибка — постоянный сдвиг для этих
         роутеров, повторами она не уменьшается, и верить ему точнее его точности нельзя."""
+        if self.manual:
+            return False
         if not self.ready:
             self.reset(x, y, None, sig_xy=sigma)
             return True
@@ -183,6 +197,8 @@ class PoseFilter:
         return self._update(np.array([x, y]), self.X[:2], H, np.eye(2) * sigma ** 2, GATE_2D)
 
     def gnss_lost(self):
+        if self.manual:
+            return
         if self.gnss != 'suspect':
             self.gnss = 'none'
         self.last_fix = None
@@ -219,7 +235,9 @@ class FollowCfg:
     junction_m: float = 4.0     # у перекрёстка разметке не верим, рулим по маршруту
     arrive_m: float = 0.3       # до точки вдоль дороги, м
     lane_align_deg: float = 30.0
-    turn_deg: float = 60.0      # дальше — разворот на месте
+    turn_deg: float = 60.0      # дальше — медленная дуга
+    turn_radius: float = 1.0    # минимум радиуса, оба борта движутся вперёд
+    turn_speed: float = 0.25
     creep_v: float = 0.3        # курса нет и разметки нет: медленно прямо, пока GPS не даст курс
 
 
@@ -304,12 +322,17 @@ class Follower:
             xr, yr = cs * tx + sn * ty, -sn * tx + cs * ty
             ang = math.atan2(yr, xr)
             if abs(ang) > math.radians(c.turn_deg):
-                self.mode = 'turn'
-                return 0.0, math.copysign(0.6, ang), False
+                self.mode = 'arc'
+                v = min(c.turn_speed, c.v_max, c.w_max * c.turn_radius)
+                w = math.copysign(v / c.turn_radius, ang)
+                self.w_prev = w
+                return v, w, False
             k = 2 * yr / (xr * xr + yr * yr)
         else:
             self.mode = 'creep'
             return c.creep_v, 0.0, False
+
+        k = float(np.clip(k, -1.0 / c.turn_radius, 1.0 / c.turn_radius))
 
         # скорость постоянная: дрожание оценки места не должно дёргать газ. Сбавляем, только если
         # поворот круче, чем позволяет w_max, и на последних метрах — чтобы встать на точку
@@ -317,6 +340,7 @@ class Follower:
         v = min(v, max(0.15, 0.4 * math.dist(p, self.path[-1])))
         w = max(-c.w_max, min(c.w_max, v * k))
         w = self.w_prev + c.w_smooth * (w - self.w_prev)
+        w = float(np.clip(w, -v / c.turn_radius, v / c.turn_radius))
         self.w_prev = w
         return v, w, False
 
@@ -359,7 +383,7 @@ class RoadNav:
         elif self.lane_age < 5:  # разметка пропала на миг (блик, пешеход) — держим последнюю, до 0,5 с
             lane, self.lane_age = self.last_lane, self.lane_age + 1
         v, w, done = self.follower.step(f.X, f.yaw_known, lane)
-        if fresh and self.follower.mode == 'lane' and f.yaw_known:
+        if fresh and not f.manual and self.follower.mode == 'lane' and f.yaw_known:
             # разметка точнее GPS поперёк дороги и по курсу: робот на оси полосы, полоса вдоль дороги
             p0, bearing = self.follower.segment()
             f.heading(bearing - lane['angle'], math.radians(3))

@@ -42,6 +42,8 @@ class NavNode(Node):
         d('odom_frame', 'odom')
         d('v_max', 0.5)
         d('arrive_m', 0.3)
+        d('turn_radius_m', 1.0)
+        d('turn_speed_m_s', 0.25)
         d('lane_timeout_s', 0.5)
         d('gnss_timeout_s', 2.0)
         d('no_position_timeout_s', 20.0)
@@ -52,7 +54,9 @@ class NavNode(Node):
         self.no_pos_timeout = float(p('no_position_timeout_s'))
 
         self.roads_mtime, self.origin = None, None
-        self.nav = RoadNav(Roads(), FollowCfg(v_max=float(p('v_max')), arrive_m=float(p('arrive_m'))))
+        self.nav = RoadNav(Roads(), FollowCfg(v_max=float(p('v_max')), arrive_m=float(p('arrive_m')),
+            turn_radius=max(0.3, float(p('turn_radius_m'))),
+            turn_speed=max(0.05, float(p('turn_speed_m_s')))))
         self.load_roads()
 
         self.pub_cmd = self.create_publisher(Twist, 'nav/cmd_vel', 10)
@@ -173,7 +177,15 @@ class NavNode(Node):
 
     def on_initialpose(self, msg: PoseWithCovarianceStamped):
         pos = msg.pose.pose.position
-        self.nav.filter.reset(pos.x, pos.y, yaw_of(msg.pose.pose.orientation), 0.5, math.radians(5))
+        self.pub_cmd.publish(Twist())
+        self.nav.filter.set_manual(pos.x, pos.y, yaw_of(msg.pose.pose.orientation))
+        self.odom = None  # не применять дельту, накопленную до установки позиции
+        self.imu_prev = None
+        self.result = None
+        self.nav.stop()
+        if self.leg:
+            self.try_plan()
+        self.publish_status()
         self.get_logger().info(f'Поза задана вручную: {pos.x:.1f}, {pos.y:.1f}')
 
     # ---------- рейс ----------
@@ -291,7 +303,7 @@ class NavNode(Node):
         self.pub_status.publish(String(data=json.dumps({
             'gnss': f.gnss, 'mode': self.nav.follower.mode if self.nav.active else 'idle',
             'lane': self.lane['lines'] if lane_on and self.lane else 0,
-            'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready), 'imu': self.imu_fresh(),
+            'manual_pose': f.manual, 'yaw_known': bool(f.yaw_known), 'ready': bool(f.ready), 'imu': self.imu_fresh(),
             # для отладочной страницы: оценка и сырой GPS в метрах карты
             'pose': [round(float(v), 3) for v in f.X] if f.ready else None,
             'sigma_xy': round(math.sqrt(max(f.P[0, 0], f.P[1, 1])), 1) if f.ready else None,

@@ -33,6 +33,8 @@ nav_node:
     arrive_m: 0.3              # до точки вдоль дороги, м
     lane_timeout_s: 0.5
     gnss_timeout_s: 2.0
+    turn_radius_m: 1.0         # дуга вместо разворота на асфальте
+    turn_speed_m_s: 0.25
     no_position_timeout_s: 20.0
 
 light_node:

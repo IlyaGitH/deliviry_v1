@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.5"
+#define FW_VERSION "3.0.6"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -494,6 +494,11 @@ static void applyDrive(double vT, double wT, double dt) {
   bool idle = fabs(vT) < 1.0 && fabs(wT) < 0.01 && fabs(vOut) < 4.0 && fabs(wOut) < 0.03;
   if (idle) { vOut = 0; wOut = 0; stopAll(); return; }
 
+  // В рейсе не превращать дугу в разворот при разгоне/торможении.
+  if (ms.st == MS_TO_PICKUP || ms.st == MS_TO_DROP || ms.st == MS_RETURN) {
+    const double maxArcW = fabs(vOut) / 300.0;  // минимум 0,3 м; Pi задаёт больший радиус
+    wOut = clampd(wOut, -maxArcW, maxArcW);
+  }
   double vl = vOut - wOut * cfg::TRACK_EFF_MM * 0.5;
   double vr = vOut + wOut * cfg::TRACK_EFF_MM * 0.5;
   double rl = vl * RPM_PER_MM_S, rr = vr * RPM_PER_MM_S;
@@ -622,6 +627,12 @@ static bool obstPresent() { return obst.dist > 0 && (nowMs() - obst.last) < cfg:
 
 // Едет по скорости от Nav2 (G), накладывая паузы и ограничения рейса.
 // Прибытие (Y) и отказ навигации (Q) тоже приходят с Pi.
+// Сохраняем кривизну при снижении скорости и полностью останавливаем дугу у препятствия.
+static void constrainTravelArc(double requestedV, double& v, double& w, bool blocked) {
+  if (requestedV > 0 && v < requestedV) w *= v / requestedV;
+  if (blocked && requestedV >= 0) { v = 0; w = 0; }
+}
+
 static void travelTick(double& v, double& w) {
   uint32_t now = nowMs();
   v = 0; w = 0;
@@ -709,8 +720,9 @@ static void travelTick(double& v, double& w) {
   if ((pauseMask & ~P_OBST) || !navFresh) return;
 
   v = clampd(nav.v, -cfg::V_BACKUP, vLim);
-  if (obstBlock && v > 0) v = 0;
   w = clampd(nav.w, -cfg::W_MAX, cfg::W_MAX);
+  // Сохранять радиус дуги при ограничении скорости; препятствие останавливает оба движения.
+  constrainTravelArc(nav.v, v, w, obstBlock);
 }
 
 static void velTick(double dt, double& v, double& w) {

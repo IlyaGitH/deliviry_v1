@@ -312,7 +312,7 @@ def api_points(body: PointsIn):
 @app.post('/api/initialpose')
 def api_initialpose(body: PoseIn):
     if not link.set_pose(body.x, body.y, body.yaw):
-        raise HTTPException(503, 'Мост ROS не поднят')
+        raise HTTPException(400, 'Координаты и угол должны быть конечными числами')
     return {'ok': True}
 
 

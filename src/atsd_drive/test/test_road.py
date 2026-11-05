@@ -171,3 +171,53 @@ def test_wifi_starts_and_bounds_but_does_not_override():
     x_before = f.X[0]
     assert f.wifi_fix(x_before + 25.0, 0.0, 30.0)
     assert f.X[0] > x_before + 5.0
+
+
+def test_manual_pose_dominates_gps_wifi_and_old_spoof_state():
+    f = PoseFilter()
+    f.reset(0, 0, 0)
+    f.gnss = 'suspect'
+    f.consistent = 9
+    f.set_manual(1000, -800, 1.0)
+    for _ in range(50):
+        f.gnss_fix(10, 20, 1)
+        f.wifi_fix(10, 20, 1)
+        f.gnss_lost()
+    assert np.allclose(f.X, [1000, -800, 1])
+    assert f.gnss == 'manual'
+    f.predict(1, 0)
+    assert math.dist(f.X[:2], [1000, -800]) > .99
+    f.set_manual(-5000, 9000, -2)
+    assert np.allclose(f.X, [-5000, 9000, -2])
+
+
+def test_turn_and_lane_commands_keep_both_sides_forward():
+    from atsd_drive.road_logic import Follower, FollowCfg
+    cfg = FollowCfg(turn_radius=1., turn_speed=.25)
+    for goal in [(0, 10), (-10, 0), (0, -10)]:
+        follower = Follower(cfg)
+        follower.start([(0, 0), goal])
+        v, w, done = follower.step((0, 0, 0), True, None)
+        assert v > 0 and not done
+        assert abs(w) <= v / cfg.turn_radius
+        assert v - abs(w) * .430 / 2 > 0
+    # Abrupt lane change/deceleration must not leave a high smoothed angular speed.
+    follower = Follower(cfg)
+    follower.start([(0, 0), (10, 0)])
+    follower.w_prev = 1.0
+    v, w, _ = follower.step((9, 0, 0), True, {'angle': .1, 'offset': 2})
+    assert abs(w) <= v / cfg.turn_radius
+
+
+def test_arc_reaches_goal_initially_behind_robot():
+    nav = RoadNav(Roads())
+    nav.filter.set_manual(0, 0, 0)
+    nav.plan((-10, 0))
+    for _ in range(2500):
+        v, w, done = nav.tick(None)
+        if done:
+            break
+        assert v > 0 and abs(w) <= v / nav.follower.cfg.turn_radius + 1e-8
+        nav.filter.predict(v * .1, w * .1)
+    assert done
+    assert math.dist(nav.filter.X[:2], (-10, 0)) < .5

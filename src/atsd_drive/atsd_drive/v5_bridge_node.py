@@ -35,6 +35,7 @@ class V5BridgeNode(Node):
         d('baud', 115200)
         d('reconnect_s', 2.0)
         d('link_timeout_s', 0.5)
+        d('serial_silence_s', 5.0)
         d('cmd_rate_hz', 20.0)
         d('cmd_timeout_s', 0.5)
         d('heartbeat_hz', 10.0)
@@ -55,6 +56,9 @@ class V5BridgeNode(Node):
         self.baud = int(p('baud'))
         self.reconnect_s = float(p('reconnect_s'))
         self.link_timeout = float(p('link_timeout_s'))
+        self.serial_silence = max(2.0, float(p('serial_silence_s')))
+        self.port_opened = 0.0
+        self.last_query = 0.0
         self.cmd_timeout = float(p('cmd_timeout_s'))
         self.obst_period = 1.0 / float(p('obstacle_max_hz'))
         self.odom_source = str(p('odom_source'))
@@ -145,6 +149,8 @@ class V5BridgeNode(Node):
             s.reset_input_buffer()
             with self.ser_lock:
                 self.ser = s
+                self.port_opened = time.monotonic()
+                self.last_rx = 0.0
             self.get_logger().info(f'Порт {self.port} открыт')
             self.send(proto.cmd_simple('?'))
             return True
@@ -161,6 +167,8 @@ class V5BridgeNode(Node):
                 except Exception:
                     pass
             self.ser = None
+            self.last_rx = 0.0
+            self.last_status = None
 
     def send(self, line: str):
         with self.ser_lock:
@@ -237,7 +245,7 @@ class V5BridgeNode(Node):
                 self.pub_fw.publish(String(data=msg.text))
                 self.get_logger().info(f'Прошивка: {msg.text}')
                 if not msg.text.startswith('ATSD-1M 3.'):
-                    self.get_logger().error('Нужна прошивка ATSD-1M 3.x (навигация по лидару) — старый протокол не поддерживается')
+                    self.get_logger().error('Нужна прошивка ATSD-1M 3.x — старый протокол не поддерживается')
 
     def on_encoders(self, e: proto.Encoders):
         self.last_flags = e.flags
@@ -329,9 +337,12 @@ class V5BridgeNode(Node):
         self.pub_state.publish(String(data=json.dumps(data, ensure_ascii=False)))
 
     def check_link(self):
-        ok = (time.monotonic() - self.last_rx) < self.link_timeout
         now = time.monotonic()
-        if ok and not self.firmware and now - getattr(self, 'last_query', 0.0) > 2.0:
+        ok = self.last_rx > 0 and (now - self.last_rx) < self.link_timeout
+        if self.ser is not None and now - max(self.last_rx, self.port_opened) > self.serial_silence:
+            self.get_logger().warn('VEX молчит — переоткрываю USB-порт')
+            self.close_port()
+        if self.ser is not None and (not ok or not self.firmware) and now - self.last_query > 2.0:
             self.last_query = now
             self.send(proto.cmd_simple('?'))
         if ok != self.link_prev:

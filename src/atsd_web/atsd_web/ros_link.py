@@ -88,6 +88,8 @@ class RosLink:
         self._thread = None
         self._stop = threading.Event()
         self._node = None
+        self._pending_pose = None
+        self._pose_revision = 0
         self._mock_cmd = deque()
         self._console = deque(maxlen=600)   # отладочная консоль: NMEA, события
         self._console_seq = 0
@@ -147,7 +149,6 @@ class RosLink:
         from sensor_msgs.msg import BatteryState, CompressedImage, NavSatFix, NavSatStatus
         from std_msgs.msg import Bool, Empty, String
         from std_srvs.srv import Trigger
-        from tf2_ros import Buffer, TransformException, TransformListener
 
         if not rclpy.ok():
             rclpy.init()
@@ -157,19 +158,6 @@ class RosLink:
         self._trigger_type = Trigger
         self._empty = Empty
         self._string = String
-
-        tf_buf = Buffer()
-        tf_listener = TransformListener(tf_buf, node)  # noqa: F841 — держит подписку на /tf
-
-        def pose_from_tf():
-            # Поза в карте лидара; одометрия Brain только для скорости
-            try:
-                t = tf_buf.lookup_transform('map', 'base_link', rclpy.time.Time())
-            except TransformException:
-                return
-            q = t.transform.rotation
-            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-            self._set(['pose'], {'x': t.transform.translation.x, 'y': t.transform.translation.y, 'yaw': yaw})
 
         def on_odom(msg: Odometry):
             with self._lock:
@@ -231,7 +219,13 @@ class RosLink:
 
         def on_road(msg: String):
             try:
-                self._set(['road'], json.loads(msg.data))
+                road = json.loads(msg.data)
+                with self._lock:
+                    if self._pending_pose is None:
+                        self._state['road'] = road
+                        if road.get('pose') is not None:
+                            x, y, yaw = road['pose']
+                            self._state['pose'] = {'x': x, 'y': y, 'yaw': yaw}
             except ValueError:
                 pass
 
@@ -277,7 +271,7 @@ class RosLink:
         try:
             while rclpy.ok() and not self._stop.is_set():
                 rclpy.spin_once(node, timeout_sec=0.1)
-                pose_from_tf()
+                self._flush_pose()
         finally:
             node.destroy_node()
 
@@ -297,7 +291,11 @@ class RosLink:
         while not self._stop.is_set():
             while self._mock_cmd:
                 cmd, arg = self._mock_cmd.popleft()
-                if cmd == 'start' and st['state'] in ('IDLE', 'DONE', 'FAULT'):
+                if cmd == 'pose':
+                    x, y, yaw = arg
+                    with self._lock:
+                        self._pending_pose = None
+                elif cmd == 'start' and st['state'] in ('IDLE', 'DONE', 'FAULT'):
                     pts = arg['points']
                     st.update(state='TO_PICKUP', **{'from': arg['from'], 'to': arg['to']})
                     target, t0 = pts[arg['from']], time.time()
@@ -398,12 +396,26 @@ class RosLink:
         return True
 
     def set_pose(self, x, y, yaw):
-        """Сбросить локализацию: робот стоит в (x, y) карты и смотрит под углом yaw."""
-        if self.mock:
-            self._set(['pose'], {'x': x, 'y': y, 'yaw': yaw})
-            return True
-        if self._node is None:
+        """Accept operator pose even before ROS/Brain is available; deliver when nav subscribes."""
+        if not all(math.isfinite(v) for v in (x, y, yaw)):
             return False
+        with self._lock:
+            self._pose_revision += 1
+            self._pending_pose = (self._pose_revision, x, y, yaw)
+            self._state['pose'] = {'x': x, 'y': y, 'yaw': yaw}
+            self._state['road'] = {**self._state['road'], 'ready': True,
+                                   'manual_pose': True, 'pose': [x, y, yaw]}
+        if self.mock:
+            self._mock_cmd.append(('pose', (x, y, yaw)))
+        self._event(f'POSE_SET {x:.2f} {y:.2f} {math.degrees(yaw):.0f}')
+        return True
+
+    def _flush_pose(self):
+        with self._lock:
+            pending = self._pending_pose
+        if pending is None or not hasattr(self, '_pub_pose') or self._pub_pose.get_subscription_count() == 0:
+            return
+        _, x, y, yaw = pending
         msg = self._pose_type()
         msg.header.frame_id = 'map'
         msg.header.stamp = self._node.get_clock().now().to_msg()
@@ -414,8 +426,9 @@ class RosLink:
         msg.pose.covariance[0] = msg.pose.covariance[7] = 0.25
         msg.pose.covariance[35] = 0.07
         self._pub_pose.publish(msg)
-        self._event(f'POSE_SET {x:.2f} {y:.2f} {math.degrees(yaw):.0f}')
-        return True
+        with self._lock:
+            if self._pending_pose == pending:
+                self._pending_pose = None
 
     def resume(self):
         if self.mock or self._node is None:

@@ -99,7 +99,7 @@ connect();
 function chip(text, cls) { return `<span class="chip ${cls || ''}">${text}</span>`; }
 function chips(t) {
   const r = t.road || {};
-  const g = { ok: ['GPS ок', 'ok'], suspect: ['GPS не верю (глушение?)', 'bad'], lost: ['GPS нет', 'warn'] }[r.gnss]
+  const g = { manual: ['Позиция задана вручную', 'ok'], ok: ['GPS ок', 'ok'], suspect: ['GPS не верю (глушение?)', 'bad'], lost: ['GPS нет', 'warn'] }[r.gnss]
     || ['GPS ' + (r.gnss || '?'), 'warn'];
   const out = [chip(g[0], g[1])];
   if (t.gnss_status) out.push(chip(t.gnss_status));

@@ -4,6 +4,7 @@
 # Устойчивое — держится STABLE_S подряд с сигналом от MIN_SIGNAL %: на краю зоны сеть
 # то ловится, то пропадает, и без этого точка не поднималась бы никогда.
 set -u
+export LC_ALL=C
 
 IFACE=wlan0
 AP_SSID=ATSD-1M
@@ -14,6 +15,7 @@ AP_CHANNEL=0   # 0 — выбор NetworkManager; иначе фиксирова�
 WAIT_S=60
 STABLE_S=30     # связь считается, только если продержалась столько подряд
 MIN_SIGNAL=25   # % сигнала известной сети; слабее — как будто её нет
+AP_RETRY_ENABLED=0  # сохранять AP; поиск известных сетей с отключением AP — только явно
 RETRY_S=180     # в режиме точки, если к ней никто не подключён, — раз в столько ищем известные сети
 POLL_S=5
 CONF=${ATSD_WIFI_CONF:-/etc/atsd/wifi.conf}
@@ -21,12 +23,27 @@ CONF=${ATSD_WIFI_CONF:-/etc/atsd/wifi.conf}
 
 AP=atsd-hotspot
 
+# Ограничиваем ожидание nmcli, чтобы запуск не зависал при загрузке NetworkManager.
+nmcli() { command nmcli --wait 10 "$@"; }
+
+no_clients() {
+  local stations
+  stations=$(iw dev "${IFACE}" station dump 2>/dev/null) || return 1
+  [[ -z ${stations} ]]
+}
+
+
 dev_state()  { nmcli -g GENERAL.STATE dev show "${IFACE}" 2>/dev/null; }       # «100 (connected)»
 dev_conn()   { nmcli -g GENERAL.CONNECTION dev show "${IFACE}" 2>/dev/null; }
 signal()     { nmcli -g IN-USE,SIGNAL dev wifi list ifname "${IFACE}" --rescan no 2>/dev/null |
                awk -F: '$1=="*"{print $2; exit}'; }
-# подключены и сигнал не на грани (пусто — nmcli не знает, верим подключению)
-link_ok()    { [[ $(dev_state) == 100* ]] && (( $(s=$(signal); echo "${s:-100}") >= MIN_SIGNAL )); }
+# Не считать пустой/нечисловой сигнал доказательством устойчивой связи.
+link_ok() {
+  local strength
+  [[ $(dev_state) == 100* ]] || return 1
+  strength=$(signal)
+  [[ ${strength} =~ ^[0-9]+$ ]] && (( 10#${strength} >= MIN_SIGNAL ))
+}
 
 start_ap() {
   if (( ${#AP_PASS} < 8 )); then
@@ -44,50 +61,62 @@ start_ap() {
   nmcli con up "${AP}" >/dev/null
 }
 
-nmcli radio wifi on
-echo "Ищу известные сети на ${IFACE}, своя точка «${AP_SSID}» через ${WAIT_S} с без связи"
-since=$(date +%s)
-ok_since=0
-ap_since=$(date +%s)
-was=
-while true; do
-  now=$(date +%s)
-  if [[ $(dev_conn) == "${AP}" ]]; then
-    since=${now}
-    state=ap
-    # в режиме точки модуль Pi не сканирует: чтобы найти сеть, появившуюся позже (раздачу
-    # телефона), точку ненадолго гасим — только если к ней никто не подключён
-    if (( now - ap_since >= RETRY_S )) && command -v iw >/dev/null &&
-       [[ -z $(iw dev "${IFACE}" station dump 2>/dev/null) ]]; then
-      echo "К точке никто не подключён — на ${WAIT_S} с ищу известные сети"
-      nmcli con down "${AP}" >/dev/null 2>&1
-      nmcli dev set "${IFACE}" autoconnect yes >/dev/null 2>&1  # после dev disconnect NM сам не подключался бы
-      ap_since=${now}
-      state=retry
-    fi
-  elif link_ok; then
-    (( ok_since )) || ok_since=${now}
-    # на краю зоны сеть то ловится, то нет: короткие подключения таймер не сбрасывают
-    (( now - ok_since >= STABLE_S )) && since=${now}
-    state="есть: $(dev_conn), сигнал $(signal)%"
-  else
-    ok_since=0
-    state="нет (${WAIT_S} с без связи — своя точка)"
-    if (( now - since >= WAIT_S )); then
-      echo "Устойчивой связи с известной сетью нет ${WAIT_S} с — поднимаю точку доступа «${AP_SSID}», адрес ${AP_ADDR%/*}"
-      nmcli dev disconnect "${IFACE}" >/dev/null 2>&1  # иначе NM продолжает цепляться за слабую сеть
-      if start_ap; then
-        echo "Точка доступа поднята: веб-интерфейс http://${AP_ADDR%/*}:8080"
-        state=ap
-        ap_since=$(date +%s)
-      else
-        echo "Точку доступа поднять не удалось, повтор через ${WAIT_S} с"
-        nmcli dev set "${IFACE}" autoconnect yes >/dev/null 2>&1  # пусть снова ищет известные сети
+main() {
+  # NetworkManager и wlan0 могут появиться после запуска сервиса.
+  until nmcli -g GENERAL.STATE dev show "${IFACE}" >/dev/null 2>&1; do
+    echo "Ожидаю интерфейс ${IFACE} в NetworkManager"
+    sleep "${POLL_S}"
+  done
+  nmcli dev set "${IFACE}" managed yes || exit 1
+  nmcli radio wifi on || exit 1
+  echo "Ищу известные сети на ${IFACE}, своя точка «${AP_SSID}» через ${WAIT_S} с без связи"
+  since=$(date +%s)
+  ok_since=0
+  ap_since=$(date +%s)
+  was=
+  while true; do
+    now=$(date +%s)
+    if [[ $(dev_state) == 100* && $(dev_conn) == "${AP}" ]]; then
+      since=${now}
+      state=ap
+      # в режиме точки модуль Pi не сканирует: чтобы найти сеть, появившуюся позже (раздачу
+      # телефона), точку ненадолго гасим — только если к ней никто не подключён
+      if (( AP_RETRY_ENABLED && now - ap_since >= RETRY_S )) && command -v iw >/dev/null && no_clients; then
+        echo "К точке никто не подключён — на ${WAIT_S} с ищу известные сети"
+        nmcli con down "${AP}" >/dev/null 2>&1
+        nmcli dev set "${IFACE}" autoconnect yes >/dev/null 2>&1  # после dev disconnect NM сам не подключался бы
+        ap_since=${now}
+        state=retry
       fi
-      since=$(date +%s)
+    elif link_ok; then
+      (( ok_since )) || ok_since=${now}
+      # на краю зоны сеть то ловится, то нет: короткие подключения таймер не сбрасывают
+      (( now - ok_since >= STABLE_S )) && since=${now}
+      state="есть: $(dev_conn), сигнал $(signal)%"
+    else
+      ok_since=0
+      state="нет (${WAIT_S} с без связи — своя точка)"
     fi
-  fi
-  [[ ${state%%:*} != "${was%%:*}" ]] && echo "Связь: ${state}"
-  was=${state}
-  sleep "${POLL_S}"
-done
+    if [[ ${state} != ap && ${state} != retry ]] && (( now - since >= WAIT_S )); then
+        echo "Устойчивой связи с известной сетью нет ${WAIT_S} с — поднимаю точку доступа «${AP_SSID}», адрес ${AP_ADDR%/*}"
+        nmcli dev disconnect "${IFACE}" >/dev/null 2>&1  # иначе NM продолжает цепляться за слабую сеть
+        if start_ap; then
+          echo "Точка доступа поднята: веб-интерфейс http://${AP_ADDR%/*}:8080"
+          state=ap
+          ap_since=$(date +%s)
+        else
+          echo "Точку доступа поднять не удалось, повтор через ${WAIT_S} с"
+          nmcli dev set "${IFACE}" autoconnect yes >/dev/null 2>&1  # пусть снова ищет известные сети
+        fi
+        since=$(date +%s)
+        ok_since=0
+    fi
+    [[ ${state%%:*} != "${was%%:*}" ]] && echo "Связь: ${state}"
+    was=${state}
+    sleep "${POLL_S}"
+  done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main
+fi

@@ -89,3 +89,40 @@ def test_debug_frame_and_compression(web):
     assert response.headers['x-seq'] == '1'
     assert response.headers['cache-control'] == 'no-store'
     assert client.get('/static/debug.js', headers={'Accept-Encoding': 'gzip'}).headers['content-encoding'] == 'gzip'
+
+
+def test_manual_pose_accepted_without_brain_or_ros(web):
+    client, link = web
+    link.mock = False
+    assert link._node is None
+    response = client.post('/api/initialpose', json={'x': 10000, 'y': -8000, 'yaw': 2.0})
+    assert response.status_code == 200
+    assert link.snapshot()['pose'] == {'x': 10000, 'y': -8000, 'yaw': 2.0}
+    assert link._pending_pose is not None
+    link._flush_pose()  # keep queued before publishers/subscribers exist
+    assert link._pending_pose is not None
+    client.post('/api/initialpose', json={'x': -5, 'y': 7, 'yaw': 0.0})
+    assert link._pending_pose[1:] == (-5, 7, 0)
+
+
+def test_latest_manual_pose_is_delivered_once_when_nav_appears(web):
+    from types import SimpleNamespace as NS
+    from unittest.mock import Mock
+    _, link = web
+    link.mock = False
+    link._pub_pose = Mock()
+    link._pub_pose.get_subscription_count.return_value = 0
+    link._node = Mock()
+    link._pose_type = lambda: NS(header=NS(), pose=NS(
+        pose=NS(position=NS(), orientation=NS()), covariance=[0.] * 36))
+    link.set_pose(10, 20, 0)
+    link.set_pose(30, 40, 1)
+    link._flush_pose()
+    link._pub_pose.publish.assert_not_called()
+    link._pub_pose.get_subscription_count.return_value = 1
+    link._flush_pose()
+    msg = link._pub_pose.publish.call_args.args[0]
+    assert msg.pose.pose.position.x == 30 and msg.pose.pose.position.y == 40
+    assert link._pending_pose is None
+    link._flush_pose()
+    assert link._pub_pose.publish.call_count == 1
