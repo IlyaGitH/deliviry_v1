@@ -234,11 +234,14 @@ class V5BridgeNode(Node):
             self.publish_state(msg)
         elif isinstance(msg, proto.Event):
             self.pub_event.publish(String(data=msg.raw))
-            level = self.get_logger().warn if msg.name in (
+            warning = msg.name in (
                 'FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
                 'MOTOR_HOT', 'BATT_LOW', 'RECOVERY', 'ESTOP', 'REJECT',
-                'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'GYRO_SIGN_FLIPPED') else self.get_logger().info
-            level(f'Brain: {msg.raw}')
+                'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'GYRO_SIGN_FLIPPED')
+            if warning:
+                self.get_logger().warn(f'Brain: {msg.raw}')
+            else:
+                self.get_logger().info(f'Brain: {msg.raw}')
         elif isinstance(msg, proto.Info):
             if msg.text != self.firmware:
                 self.firmware = msg.text
@@ -347,8 +350,10 @@ class V5BridgeNode(Node):
             self.send(proto.cmd_simple('?'))
         if ok != self.link_prev:
             self.link_prev = ok
-            (self.get_logger().info if ok else self.get_logger().error)(
-                'Brain на связи' if ok else 'Нет данных от Brain')
+            if ok:
+                self.get_logger().info('Brain на связи')
+            else:
+                self.get_logger().error('Нет данных от Brain')
             if not ok:
                 self.pub_state.publish(String(data=json.dumps(
                     {'state': 'UNKNOWN', 'link': False, 'pause': [], 'flags': []})))

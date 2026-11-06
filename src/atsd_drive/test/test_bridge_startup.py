@@ -100,3 +100,25 @@ def test_bridge_rejects_delayed_checked_commands(bridge_module):
     node.send.reset_mock()
     node.on_nav_cmd(msg)
     node.send.assert_not_called()
+
+
+def test_ros_logger_severity_is_constant_per_callsite(bridge_module, monkeypatch):
+    import inspect
+    node=make_bridge(bridge_module)
+    seen={}
+    class Logger:
+        def record(self,level):
+            frame=inspect.currentframe().f_back.f_back
+            key=(frame.f_code,frame.f_lineno)
+            assert seen.setdefault(key,level)==level
+        def info(self,*args): self.record('info')
+        def warn(self,*args): self.record('warn')
+        def error(self,*args): self.record('error')
+    node.get_logger=lambda:Logger()
+    monkeypatch.setattr(bridge_module.time,'monotonic',lambda:10.)
+    for last in (0.,9.9,0.,9.9):
+        node.last_rx=last
+        node.check_link()
+    node.pub_event=Mock()
+    for text in ('K LINK_OK','K LINK_LOST','K LINK_OK','K ESTOP'):
+        node.handle_line(text)
