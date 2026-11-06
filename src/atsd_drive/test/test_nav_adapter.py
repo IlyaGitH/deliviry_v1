@@ -31,7 +31,7 @@ def adapter(monkeypatch):
     clock=[10.]
     monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
     node=module.NavNode.__new__(module.NavNode)
-    node.nav=RoadNav(Roads());node.nav.filter.set_manual(0.,0.,0.);node.nav.plan((5.,0.))
+    node.nav=RoadNav(Roads(allow_direct=True));node.nav.filter.set_manual(0.,0.,0.);node.nav.plan((5.,0.))
     node.local=LocalPlanner();node.avoidance=Decision();node.blocked_since=None;node.blocked_timeout=30.
     node.odom=(0.,0.,0.);node.odom_t=10.;node.v_odom=node.w_odom=0.
     node.space=None;node.scan_pose=None;node.scan_t=0.
@@ -92,3 +92,35 @@ def test_blocked_timeout_fails_and_mission_pause_stops(adapter):
     node.local.reverse_distance=2.
     node.on_state(module.String(data='{"state":"TO_DROP","to":"goal","pause":["red_light"]}'))
     assert node.leg is None and not node.nav.active and node.local.reverse_distance==0.
+
+
+def test_graph_replacement_invalidates_active_path(adapter):
+    _,node,_=adapter
+    node.local.reverse_distance=2.
+    node.invalidate_road_plan()
+    assert not node.nav.active
+    assert node.local.reverse_distance==0.
+    node.publish_command.assert_called_with()
+    node.publish_plan.assert_called_once()
+
+
+def test_delivery_point_coordinates_take_priority_over_same_named_road_node(adapter,tmp_path):
+    import json
+    _,node,_=adapter
+    node.points_file=str(tmp_path/'points.json')
+    (tmp_path/'points.json').write_text(json.dumps([{'id':'kpp','x':10,'y':2}]))
+    node.nav.roads=Roads({'kpp':[0,0],'home':[5,0]},[['kpp','home']])
+    assert node.goal_of('kpp')==(10.,2.)
+    assert node.goal_of('home')==(5.,0.)
+
+
+def test_production_graph_without_roads_fails_instead_of_driving_direct(adapter):
+    _,node,_=adapter
+    node.nav.roads=Roads()
+    node.nav.stop()
+    node.load_roads=Mock()
+    node.goal_of=Mock(return_value=(5.,0.))
+    node.try_plan()
+    assert node.result==(('TO_DROP','goal'),False)
+    assert not node.nav.active
+    node.publish_command.assert_called_with()

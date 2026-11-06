@@ -283,6 +283,7 @@ class RosLink:
               'remain_m': 0.0, 'mission_s': 0.0, 'link': True}
         target, t0, drive, comp = None, None, 92.0, 88.0
         pts = {}
+        route, routes = [], []
         tick = 0
         with self._lock:
             self._state['connected'] = True
@@ -297,6 +298,8 @@ class RosLink:
                         self._pending_pose = None
                 elif cmd == 'start' and st['state'] in ('IDLE', 'DONE', 'FAULT'):
                     pts = arg['points']
+                    routes = arg['routes']
+                    route = list(routes[0]) if routes else []
                     st.update(state='TO_PICKUP', **{'from': arg['from'], 'to': arg['to']})
                     target, t0 = pts[arg['from']], time.time()
                     self._event(f'MISSION_START {arg["from"]} {arg["to"]}')
@@ -304,6 +307,7 @@ class RosLink:
                 elif cmd == 'cargo' and st['state'] == 'WAIT_LOAD':
                     self._event('CARGO_LOADED')
                     st['state'], target = 'TO_DROP', pts[st['to']]
+                    route = list(routes[1]) if len(routes)>1 else []
                     self._event('STATE TO_DROP')
                 elif cmd == 'cargo' and st['state'] == 'WAIT_UNLOAD':
                     self._event('CARGO_UNLOADED')
@@ -315,11 +319,19 @@ class RosLink:
                     self._event('MISSION_ABORT')
 
             if target is not None and st['state'] in ('TO_PICKUP', 'TO_DROP'):
-                dx, dy = target[0] - x, target[1] - y
+                while len(route)>1 and math.dist((x,y),route[0])<.12:
+                    route.pop(0)
+                waypoint = route[0] if route else (x,y)
+                dx, dy = waypoint[0] - x, waypoint[1] - y
                 dist = math.hypot(dx, dy)
                 step = 0.55 * 0.2
-                st['remain_m'] = round(dist, 1)
-                if dist < step:
+                st['remain_m'] = round(dist+sum(math.dist(a,b) for a,b in zip(route,route[1:])),1)
+                if not route:
+                    st['state'], target = 'FAULT', None
+                    self._event('NAV_FAILED no_route')
+                elif dist < step and len(route)>1:
+                    x,y=route.pop(0)
+                elif dist < step:
                     x, y = target
                     arrived = st['state'] == 'TO_PICKUP'
                     goal = st['from'] if arrived else st['to']
@@ -338,7 +350,7 @@ class RosLink:
                 self._state['pose'] = {'x': x, 'y': y, 'yaw': yaw}
                 self._state['speed'] = 0.55 if st['state'] in ('TO_PICKUP', 'TO_DROP') else 0.0
                 self._state['mission'] = dict(st)
-                self._state['plan'] = [(x, y), tuple(target)] if target is not None else []
+                self._state['plan'] = [(x,y),*route] if target is not None else []
                 near_pt = min(pts.items(), key=lambda kv: math.hypot(kv[1][0] - x, kv[1][1] - y)) if pts else None
                 if near_pt:
                     d = math.hypot(near_pt[1][0] - x, near_pt[1][1] - y)
@@ -368,9 +380,9 @@ class RosLink:
                     self._log(line, 'nmea')
             time.sleep(0.2)
 
-    def start_mission(self, from_id, to_id, points=None):
+    def start_mission(self, from_id, to_id, points=None, routes=None):
         if self.mock:
-            self._mock_cmd.append(('start', {'from': from_id, 'to': to_id, 'points': points or {}}))
+            self._mock_cmd.append(('start', {'from': from_id, 'to': to_id, 'points': points or {}, 'routes': routes or []}))
             return True
         if self._node is None:
             return False

@@ -27,49 +27,96 @@ def to_geo(x, y, origin):
 
 
 class Roads:
-    """Граф дорог: узлы — перекрёстки, повороты и точки заказа; рёбра — отрезки дороги."""
+    """Road geometry with bounded endpoint snapping and optional one-way segments."""
 
-    def __init__(self, nodes=None, edges=None):
-        self.nodes = {k: (float(v[0]), float(v[1])) for k, v in (nodes or {}).items()}
-        self.adj = {k: [] for k in self.nodes}
-        for a, b in edges or []:
-            if a in self.nodes and b in self.nodes:
-                self.adj[a].append(b)
-                self.adj[b].append(a)
+    def __init__(self, nodes=None, edges=None, *, directed_edges=None, allow_direct=False, snap_m=3.0):
+        self.nodes = {str(k): (float(v[0]), float(v[1])) for k, v in (nodes or {}).items()}
+        if not all(math.isfinite(x) for p in self.nodes.values() for x in p):
+            raise ValueError('Non-finite road coordinate')
+        self.allow_direct, self.snap_m = allow_direct, float(snap_m)
+        if not math.isfinite(self.snap_m) or not .1 <= self.snap_m <= 5.:
+            raise ValueError('Road snapping distance must be between 0.1 and 5 m')
+        self.edges = []
+        seen = set()
+        for directed, rows in ((False, edges or []), (True, directed_edges or [])):
+            for a, b in rows:
+                a, b = str(a), str(b)
+                if a not in self.nodes or b not in self.nodes:
+                    raise ValueError('Road edge references a missing node')
+                if a == b or math.dist(self.nodes[a], self.nodes[b]) < 1e-6:
+                    continue
+                key = (a, b, directed) if directed else (*sorted((a, b)), False)
+                if key not in seen:
+                    seen.add(key)
+                    self.edges.append((a, b, directed))
+
+    @classmethod
+    def from_data(cls, data):
+        if not isinstance(data, dict):
+            raise ValueError('Expected a road graph object')
+        return cls(data.get('nodes'), data.get('edges'), directed_edges=data.get('directed_edges'),
+                   snap_m=data.get('snap_m', 3.0))
 
     def nearest(self, p):
         return min(self.nodes, key=lambda k: math.dist(self.nodes[k], p), default=None)
 
+    def snap(self, p):
+        best = None
+        for i, (a, b, _) in enumerate(self.edges):
+            ax, ay = self.nodes[a]; bx, by = self.nodes[b]
+            dx, dy = bx-ax, by-ay
+            t = max(0., min(1., ((p[0]-ax)*dx+(p[1]-ay)*dy)/(dx*dx+dy*dy)))
+            q = (ax+t*dx, ay+t*dy)
+            d = math.dist(p, q)
+            if best is None or d < best[0]:
+                best = (d, i, t, q)
+        return best if best is not None and best[0] <= self.snap_m else None
+
     def route(self, start, goal):
-        """Ломаная от start до goal по дорогам. Без графа — прямая."""
-        s, g = self.nearest(start), self.nearest(goal)
-        if s is None:
-            return [tuple(start), tuple(goal)]
-        dist, prev, todo = {s: 0.0}, {}, [(0.0, s)]
-        while todo:
-            d, u = heapq.heappop(todo)
-            if u == g:
-                break
-            if d > dist[u]:
-                continue
-            for v in self.adj[u]:
-                nd = d + math.dist(self.nodes[u], self.nodes[v])
+        """Split the closest road segments at start/goal; never skip road bends."""
+        if not all(math.isfinite(x) for x in (*start, *goal)):
+            return None
+        if not self.edges:
+            return [tuple(start), tuple(goal)] if self.allow_direct else None
+        ss, gg = self.snap(start), self.snap(goal)
+        if ss is None or gg is None:
+            return None
+        # Object keys cannot collide with IDs supplied by a map or an operator.
+        source, target = object(), object()
+        coords = {**self.nodes, source: ss[3], target: gg[3]}
+        adj = {k: [] for k in coords}
+        for i, (a, b, directed) in enumerate(self.edges):
+            chain = [(0., a), (1., b)]
+            if i == ss[1]: chain.append((ss[2], source))
+            if i == gg[1]: chain.append((gg[2], target))
+            chain.sort(key=lambda item: item[0])
+            for (_, u), (_, v) in zip(chain, chain[1:]):
+                d = math.dist(coords[u], coords[v])
+                adj[u].append((v, d))
+                if not directed or d < 1e-8:
+                    adj[v].append((u, d))
+        dist, prev, queue = {source: 0.}, {}, [(0., 0, source)]
+        counter = 0
+        while queue:
+            d, _, u = heapq.heappop(queue)
+            if d > dist[u]: continue
+            if u is target: break
+            for v, length in adj[u]:
+                nd = d+length
                 if nd < dist.get(v, math.inf):
                     dist[v], prev[v] = nd, u
-                    heapq.heappush(todo, (nd, v))
-        if g not in dist:
+                    counter += 1
+                    heapq.heappush(queue, (nd, counter, v))
+        if target not in dist:
             return None
-        ids = [g]
-        while ids[-1] != s:
+        ids = [target]
+        while ids[-1] is not source:
             ids.append(prev[ids[-1]])
-        pts = [self.nodes[k] for k in reversed(ids)]
-        # робот уже за первым узлом по ходу (между ним и следующим) или стоит на нём — узел не нужен
-        if len(pts) > 1 and (math.dist(start, pts[0]) < 1.0 or
-                             math.dist(start, pts[1]) < math.dist(pts[0], pts[1])):
-            pts = pts[1:]
-        if math.dist(pts[-1], goal) > 0.5:
-            pts.append(tuple(goal))
-        return [tuple(start)] + pts
+        path = [tuple(start)]
+        for q in [coords[k] for k in reversed(ids)] + [tuple(goal)]:
+            if math.dist(path[-1], q) > 1e-6:
+                path.append(q)
+        return path if len(path) > 1 else [tuple(start), tuple(goal)]
 
 
 GATE_2D = 13.8  # хи-квадрат, 2 степени свободы, 99.9 %

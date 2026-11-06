@@ -15,6 +15,8 @@ def web(monkeypatch, tmp_path):
     for name, filename in [('POINTS_FILE', 'points.json'), ('ORDERS_FILE', 'orders.json'),
                            ('ROADS_FILE', 'roads.json')]:
         monkeypatch.setattr(server, name, tmp_path / filename)
+    server._save(server.ROADS_FILE, {'nodes': {p['id']:[p['x'],p['y']] for p in server.DEFAULT_POINTS},
+        'edges':[['kpp','admin'],['admin','testing'],['testing','depot']]})
     link = RosLink(mock=True)
     monkeypatch.setattr(server, 'link', link)
     return TestClient(server.app), link

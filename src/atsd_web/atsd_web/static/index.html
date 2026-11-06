@@ -124,12 +124,36 @@
     <div class="form">
       <label>Откуда<select id="selFrom"></select></label>
       <label>Куда<select id="selTo"></select></label>
+      <button class="btn ghost" id="btnPreview">Показать маршрут</button>
       <button class="btn" id="btnCreate">Отправить робота</button>
     </div>
     <div class="links hidden" id="orderLinks">
       <div class="lk"><small>Ссылка отправителю</small><input readonly id="lkSender"></div>
       <div class="lk"><small>Ссылка получателю</small><input readonly id="lkReceiver"></div>
     </div>
+  </section>
+
+  <section class="panel admin-only" id="roadsPanel">
+    <div class="panel-head"><h2>Дороги на карте</h2></div>
+    <p class="hint" id="roadsStatus">Дороги ещё не загружены.</p>
+    <div class="admin-row">
+      <button class="btn ghost small" id="btnImportRoads">Загрузить дороги OSM</button>
+      <button class="btn ghost small" id="btnEditRoads">Отметить дороги</button>
+    </div>
+    <p class="hint">Дороги сохраняются на Pi и работают без интернета. Если участка нет в OSM,
+      отметьте повороты по карте Яндекса. На перекрёстке нажмите на существующую линию, чтобы соединить дороги.</p>
+    <div class="hidden" id="roadTools">
+      <div class="admin-row">
+        <button class="mini" id="btnRoadNew">Новая ветка</button>
+        <button class="mini" id="btnRoadDelete">Удалить участок</button>
+        <button class="mini" id="btnRoadUndo">Отменить точку</button>
+      </div>
+      <div class="admin-row">
+        <button class="btn small" id="btnSaveRoads">Сохранить дороги</button>
+        <button class="btn ghost small" id="btnCancelRoads">Отменить правки</button>
+      </div>
+    </div>
+    <p class="hint"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> — источник загружаемых дорог. Подложка — Яндекс.</p>
   </section>
 
   <section class="panel admin-only" id="pointsPanel">
@@ -147,6 +171,7 @@
 </main>
 
 <div class="toast" id="toast"></div>
+<script src="/static/road_editor.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

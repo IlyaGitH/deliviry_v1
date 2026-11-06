@@ -99,7 +99,7 @@ def run(name, data, duration=100., cfg=None):
     segments,pose,goal=data
     cfg=cfg or LocalCfg()
     planner=LocalPlanner(cfg)
-    nav=RoadNav(Roads())
+    nav=RoadNav(Roads(allow_direct=True))
     nav.filter.set_manual(*pose)
     nav.plan(goal)
     v,w=0.,0.

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
 import json
+import hashlib
+import urllib.parse
 import math
 import os
 import secrets
@@ -19,6 +21,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from atsd_web.ros_link import RosLink
+from atsd_web import road_map
+from atsd_drive.road_logic import Roads
 
 DATA_DIR = Path(os.environ.get('ATSD_DATA', '/opt/atsd/data'))
 POINTS_FILE = DATA_DIR / 'points.json'
@@ -32,7 +36,7 @@ DEFAULT_POINTS = [
     {'id': 'depot',   'name': 'Склад',             'x': 0.0,  'y': 3.0, 'indoor': True},
 ]
 
-_store_lock = threading.Lock()
+_store_lock = threading.RLock()
 
 
 # Подложка — карта Яндекса вокруг origin графа дорог (начало координат карты робота).
@@ -55,12 +59,15 @@ def map_origin():
     here = (g['lat'], g['lon']) if g.get('fix') else (w[0], w[1]) if w else None
     if here is None:
         return None
-    roads.setdefault('nodes', {})
-    roads.setdefault('edges', [])
-    roads['origin'] = [round(here[0], 7), round(here[1], 7)]
     with _store_lock:
+        roads = _load(ROADS_FILE, {})
+        if roads.get('origin'):
+            return tuple(roads['origin'])
+        roads.setdefault('nodes', {})
+        roads.setdefault('edges', [])
+        roads['origin'] = [round(here[0], 7), round(here[1], 7)]
         _save(ROADS_FILE, roads)
-    print(f'Начало координат карты по {"GPS" if g.get("fix") else "Wi-Fi"}: {roads["origin"]}')
+    print(f'Начало координат карты: {roads["origin"]}')
     return tuple(roads['origin'])
 
 
@@ -133,6 +140,22 @@ class PoseIn(BaseModel):
     x: float
     y: float
     yaw: float
+
+
+class RoadsIn(BaseModel):
+    roads: dict
+    revision: str
+
+
+class RoadImportIn(BaseModel):
+    revision: str
+    origin: list[float] | None = None
+    radius_m: float = 600.
+
+
+class RouteIn(BaseModel):
+    start: list[float]
+    goal: list[float]
 
 
 class OrderIn(BaseModel):
@@ -276,7 +299,7 @@ def order_view(order, tele):
 def index():
     # Метка версии в ссылках: после обновления браузер не возьмёт старые app.js и style.css из кэша
     html = (STATIC / 'index.html').read_text(encoding='utf-8')
-    for name in ('app.js', 'style.css'):
+    for name in ('app.js', 'road_editor.js', 'style.css'):
         html = html.replace(f'/static/{name}"', f'/static/{name}?v={int((STATIC / name).stat().st_mtime)}"')
     return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
 
@@ -286,7 +309,92 @@ def api_config():
     maps = {k: m for k in MAP_LAYERS if (m := yandex_map(k))}
     roads = _load(ROADS_FILE, {})
     return {'points': points(), 'maps': maps,
-            'roads': {'nodes': roads.get('nodes', {}), 'edges': roads.get('edges', [])}}
+            'roads': roads, 'roads_revision': road_revision(roads)}
+
+
+def road_revision(data):
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
+def road_changes_allowed():
+    tele=link.snapshot() if link else {}
+    if active_order() or (tele.get('mission') or {}).get('state') in ('TO_PICKUP','WAIT_LOAD','TO_DROP','WAIT_UNLOAD','RETURN'):
+        raise HTTPException(409, 'Завершите рейс перед изменением дорог или точек доставки')
+
+
+def save_roads(data, revision):
+    try:
+        clean=road_map.validate(data)
+    except (ValueError,TypeError,KeyError,IndexError) as e:
+        raise HTTPException(400,str(e))
+    with _store_lock:
+        road_changes_allowed()
+        current=_load(ROADS_FILE,{})
+        if road_revision(current)!=revision:
+            raise HTTPException(409,'Карта изменилась. Обновите страницу перед сохранением')
+        if current.get('origin') and clean.get('origin')!=current['origin']:
+            raise HTTPException(409,'Сохраните прежний центр карты: к нему привязаны точки и позиция робота')
+        if current:
+            _save(DATA_DIR / ('roads-backup-'+str(time.time_ns())+'.json'),current)
+        _save(ROADS_FILE,clean)
+    return {'roads':clean,'roads_revision':road_revision(clean)}
+
+
+@app.post('/api/roads')
+def api_roads(body: RoadsIn):
+    return save_roads(body.roads,body.revision)
+
+
+def fetch_osm(origin, radius):
+    lat,lon=origin
+    dy=math.degrees(radius/6378137.)
+    dx=dy/math.cos(math.radians(lat))
+    bbox=f'{lat-dy:.7f},{lon-dx:.7f},{lat+dy:.7f},{lon+dx:.7f}'
+    query=f'[out:json][timeout:20];way["highway"]({bbox});(._;>;);out body;'
+    req=urllib.request.Request('https://overpass-api.de/api/interpreter',
+        data=urllib.parse.urlencode({'data':query}).encode(),headers={'User-Agent':'ATSD-road-map/1.0'})
+    with urllib.request.urlopen(req,timeout=25) as response:
+        payload=response.read(8_000_001)
+    if len(payload)>8_000_000: raise ValueError('Карта слишком большая: уменьшите радиус')
+    return json.loads(payload)
+
+
+@app.post('/api/roads/import')
+def api_import_roads(body: RoadImportIn):
+    road_changes_allowed()
+    current=_load(ROADS_FILE,{})
+    if road_revision(current)!=body.revision:
+        raise HTTPException(409,'Карта изменилась. Обновите страницу перед загрузкой')
+    origin=current.get('origin') or body.origin
+    try:
+        road_map.validate({'origin':origin})
+        if origin is None: raise ValueError('Укажите центр карты: широту и долготу')
+        if not math.isfinite(body.radius_m) or not 100<=body.radius_m<=1500:
+            raise ValueError('Радиус загрузки должен быть от 100 до 1500 м')
+        data=road_map.from_osm(fetch_osm(origin,body.radius_m),origin)
+    except (OSError,ValueError,TypeError,KeyError) as e:
+        raise HTTPException(400,'Не удалось загрузить дороги: '+str(e))
+    # Recheck revision/mission after network I/O; cannot overwrite a concurrent edit.
+    return save_roads(data,body.revision)
+
+
+def plan_road(start,goal):
+    if len(start)!=2 or len(goal)!=2:
+        raise HTTPException(400,'Нужны координаты x, y')
+    try:
+        graph=Roads.from_data(road_map.validate(_load(ROADS_FILE,{})))
+        path=graph.route(start,goal)
+    except (ValueError,TypeError,KeyError,IndexError):
+        raise HTTPException(400,'Некорректные координаты или граф дорог')
+    if path is None:
+        raise HTTPException(409,'Нет пути по дорогам: проверьте соединения и расположите точки не дальше 3 м от дороги')
+    return {'path':path,'distance_m':sum(math.dist(a,b) for a,b in zip(path,path[1:])),
+            'source':'roads'}
+
+
+@app.post('/api/route')
+def api_route(body: RouteIn):
+    return plan_road(body.start,body.goal)
 
 
 @app.get('/api/map/{layer}.{ext}')
@@ -305,6 +413,7 @@ def api_points(body: PointsIn):
         if not all(k in p for k in ('id', 'name', 'x', 'y')):
             raise HTTPException(400, 'Точке нужны id, name, x, y')
     with _store_lock:
+        road_changes_allowed()
         _save(POINTS_FILE, body.points)
     return {'ok': True, 'count': len(body.points)}
 
@@ -330,33 +439,41 @@ def require_robot():
 
 @app.post('/api/orders')
 def api_create(body: OrderIn):
-    if body.from_id == body.to_id:
-        raise HTTPException(400, 'Точка отправления и назначения совпадают')
-    if not point_by_id(body.from_id) or not point_by_id(body.to_id):
-        raise HTTPException(400, 'Неизвестная точка')
-    if active_order():
-        raise HTTPException(409, 'Уже есть активный заказ')
-    tele = require_robot()
-    m = tele.get('mission') or {}
-    if m.get('state') in ('TO_PICKUP', 'WAIT_LOAD', 'TO_DROP', 'WAIT_UNLOAD', 'RETURN'):
-        raise HTTPException(409, 'Робот выполняет другой рейс')
-    if (tele.get('road') or {}).get('ready') is False:
-        # иначе nav_node через 20 с отменит рейс с no_position
-        raise HTTPException(409, 'Робот не знает, где он: GPS нет. Нажмите «Робот здесь» и покажите на карте, '
-                                 'где он стоит и куда смотрит')
+    with _store_lock:
+        if body.from_id == body.to_id:
+            raise HTTPException(400, 'Точка отправления и назначения совпадают')
+        if not point_by_id(body.from_id) or not point_by_id(body.to_id):
+            raise HTTPException(400, 'Неизвестная точка')
+        if active_order():
+            raise HTTPException(409, 'Уже есть активный заказ')
+        tele = require_robot()
+        m = tele.get('mission') or {}
+        if m.get('state') in ('TO_PICKUP', 'WAIT_LOAD', 'TO_DROP', 'WAIT_UNLOAD', 'RETURN'):
+            raise HTTPException(409, 'Робот выполняет другой рейс')
+        if (tele.get('road') or {}).get('ready') is False:
+            # иначе nav_node через 20 с отменит рейс с no_position
+            raise HTTPException(409, 'Робот не знает, где он: GPS нет. Нажмите «Робот здесь» и покажите на карте, '
+                                     'где он стоит и куда смотрит')
 
-    order = {
-        'id': secrets.token_hex(4), 'from_id': body.from_id, 'to_id': body.to_id,
-        'comment': body.comment, 'status': 'to_pickup', 'created': now_iso(),
-        'started_ts': time.time(),
-        'sender_token': secrets.token_urlsafe(8), 'receiver_token': secrets.token_urlsafe(8),
-    }
-    pts = {p['id']: (p['x'], p['y']) for p in points()}
-    link.start_mission(body.from_id, body.to_id, pts)
-    data = orders()
-    data.append(order)
-    save_orders(data)
-    return order
+        pts = {p['id']: (p['x'], p['y']) for p in points()}
+        pose=tele.get('pose') or {}
+        if 'x' not in pose or 'y' not in pose:
+            raise HTTPException(409,'Укажите позицию робота на карте')
+        routes=[plan_road((pose['x'],pose['y']),pts[body.from_id])['path'],
+                plan_road(pts[body.from_id],pts[body.to_id])['path']]
+
+        order = {
+            'id': secrets.token_hex(4), 'from_id': body.from_id, 'to_id': body.to_id,
+            'comment': body.comment, 'status': 'to_pickup', 'created': now_iso(),
+            'started_ts': time.time(),
+            'sender_token': secrets.token_urlsafe(8), 'receiver_token': secrets.token_urlsafe(8),
+        }
+        if not link.start_mission(body.from_id, body.to_id, pts, routes=routes):
+            raise HTTPException(503,'Не удалось передать маршрут роботу')
+        data = orders()
+        data.append(order)
+        save_orders(data)
+        return order
 
 
 def _find(oid):

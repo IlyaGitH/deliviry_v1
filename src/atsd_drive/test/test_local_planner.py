@@ -128,14 +128,14 @@ def test_full_swept_body_not_just_endpoint_or_center():
 
 
 def test_strict_arrival_does_not_finish_beside_obstacle():
-    nav=RoadNav(Roads());nav.filter.set_manual(0.,0.,0.);nav.plan((4.,0.))
+    nav=RoadNav(Roads(allow_direct=True));nav.filter.set_manual(0.,0.,0.);nav.plan((4.,0.))
     nav.filter.X[:]=[4.,2.,0.]
     _,_,done=nav.tick(None,strict_arrival=True)
     assert not done and nav.active
 
 
 def test_detour_disables_lane_pose_snap_and_old_lane_cache():
-    nav=RoadNav(Roads());nav.filter.reset(0.,1.,0.);nav.plan((10.,0.))
+    nav=RoadNav(Roads(allow_direct=True));nav.filter.reset(0.,1.,0.);nav.plan((10.,0.))
     before=nav.filter.X.copy()
     nav.last_lane={'offset':-1.,'angle':0.,'width':3.,'lines':2}
     nav.tick(nav.last_lane,correct_lane=False)

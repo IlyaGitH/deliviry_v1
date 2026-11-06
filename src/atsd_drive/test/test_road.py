@@ -105,8 +105,8 @@ def test_route_follows_graph_and_skips_passed_node():
     r = Roads(NODES, EDGES)
     assert r.route((0, 0), NODES['D']) == [(0, 0), NODES['B'], NODES['C'], NODES['D']]
     # робот уже на отрезке A→B: в A не возвращается
-    assert r.route((20, 0.5), NODES['D'])[1] == NODES['B']
-    assert Roads().route((0, 0), (5, 5)) == [(0, 0), (5, 5)]
+    assert r.route((20, 0.5), NODES['D']) == [(20, .5), (20, 0), NODES['B'], NODES['C'], NODES['D']]
+    assert Roads(allow_direct=True).route((0, 0), (5, 5)) == [(0, 0), (5, 5)]
 
 
 def test_spoofed_jump_rejected_then_recovered():
@@ -210,7 +210,7 @@ def test_turn_and_lane_commands_keep_both_sides_forward():
 
 
 def test_arc_reaches_goal_initially_behind_robot():
-    nav = RoadNav(Roads())
+    nav = RoadNav(Roads(allow_direct=True))
     nav.filter.set_manual(0, 0, 0)
     nav.plan((-10, 0))
     for _ in range(2500):

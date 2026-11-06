@@ -126,17 +126,32 @@ class NavNode(Node):
             mtime = os.path.getmtime(self.roads_file)
         except OSError:
             if self.roads_mtime is not False:
-                self.get_logger().warn(f'Нет {self.roads_file}: без графа дорог еду к точке напрямую, '
-                                       'без origin GPS не используется')
+                self.get_logger().warn(f'Нет {self.roads_file}: '
+                                       'нужны дороги на карте; рейс не будет запущен')
+            self.invalidate_road_plan()
             self.roads_mtime = False
+            self.nav.roads = Roads()
             return
         if mtime == self.roads_mtime:
             return
         data = load_json(self.roads_file, {})
+        if not isinstance(data, dict): data = {}
+        self.invalidate_road_plan()
         self.roads_mtime = mtime
-        self.nav.roads = Roads(data.get('nodes'), data.get('edges'))
+        try:
+            self.nav.roads = Roads.from_data(data)
+        except (ValueError, TypeError, KeyError, IndexError):
+            self.nav.roads = Roads()
+            self.get_logger().error('Некорректный граф дорог — движение по маршруту запрещено')
         self.origin = tuple(data['origin']) if data.get('origin') else None
         self.get_logger().info(f'Граф дорог: {len(self.nav.roads.nodes)} узлов, origin {self.origin}')
+
+    def invalidate_road_plan(self):
+        if self.nav.active:
+            self.nav.stop()
+            self.publish_command()
+            self.reset_local()
+            self.publish_plan()
 
     def on_imu(self, msg: Imu):
         self.imu_yaw, self.imu_rate = yaw_of(msg.orientation), msg.angular_velocity.z
@@ -257,10 +272,10 @@ class NavNode(Node):
             self.try_plan()
 
     def goal_of(self, pid):
-        if pid in self.nav.roads.nodes:
-            return self.nav.roads.nodes[pid]
         pt = find_point(load_json(self.points_file, []), pid)
-        return (float(pt['x']), float(pt['y'])) if pt else None
+        if pt:
+            return (float(pt['x']), float(pt['y']))
+        return self.nav.roads.nodes.get(pid)
 
     def try_plan(self):
         self.load_roads()
