@@ -64,7 +64,7 @@ const double V_CRUISE=800, V_CREEP=100, DECEL_PLAN=450, OBST_STOP_MM=450, OBST_S
 const double V_BACKUP=180, W_MAX=2, STOP_IGNORE_MM=1000;
 const uint32_t STOP_HOLD_MS=3000, NAV_CMD_TIMEOUT_MS=300, NAV_LOST_MS=20000;
 }
-struct {bool sideDead=false,stall=false,bump=false;} hl;
+struct {bool sideDead=false,stall=false;} hl;
 struct {bool ok=true;} piLink;
 struct {bool holding=false,pending=false;uint32_t holdUntil=0;double ignoreUntil=0,stopAt=0;} stopSign;
 struct {bool red=false;double stopAt=0;} tLight;
@@ -90,9 +90,7 @@ int main(){
   extLimitPct=100;tLight.red=true;travelTick(v,w);assert(v==0&&w==0);
   tLight.red=false;stopSign.holding=true;stopSign.holdUntil=5000;
   travelTick(v,w);assert(v==0&&w==0);
-  stopSign.holding=false;hl.bump=true;travelTick(v,w);
-  assert(v==0&&w==0&&strcmp(fault,"BUMPER")==0);
-  hl.bump=false;hl.stall=true;travelTick(v,w);
+  stopSign.holding=false;hl.stall=true;travelTick(v,w);
   assert(v==0&&w==0&&strcmp(fault,"STALL")==0);
   hl.stall=false;nav.last=500;travelTick(v,w);assert(v==0&&w==0);
   nav.last=999;obst.dist=400;nav.v=250;nav.w=.25;
@@ -104,31 +102,38 @@ int main(){
     subprocess.run(['g++', '-std=c++11', str(test), '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)
 
-
-def test_motor_only_configuration_never_reads_missing_adi_sensors(tmp_path):
+def test_encoder_odometry_without_external_sensors(tmp_path):
     source = (Path(__file__).resolve().parents[3] / 'firmware/vex_v5/src/main.cpp').read_text()
     import re
-    declarations = '\n'.join(re.findall(r'const bool\s+(?:USE_GYRO|ENABLE_BUMPERS)\s*=.*?;', source))
-    functions = ''
-    for prefix in ('static void startGyroCalibration', 'static void bumperUpdate'):
-        functions += prefix + source.split(prefix, 1)[1].split('\n}', 1)[0] + '\n}\n'
-    test = tmp_path / 'sensors.cpp'
-    test.write_text('#include <cassert>\nnamespace cfg {' + declarations + '}\n' + r'''
-int reads=0, calibrations=0;
-struct {void calibrate(){calibrations++;}} Gyro;
-struct Bumper {bool pressing(){reads++;return true;}} BumpL,BumpR;
-bool gyroCal=true,gyroFault=true;
-double gyroSuspectMs=0;
-struct {bool bump=false,bumpPrev=false;} hl;
-void logEvent(const char*){}
-''' + functions + r'''
+    assert not re.search(r'gyro|bumper|ThreeWirePort|!GC', source, re.I)
+    function = 'static void odomUpdate' + source.split('static void odomUpdate',1)[1].split('\n}',1)[0]+'\n}'
+    test=tmp_path/'odom.cpp'
+    test.write_text(r'''
+#include <cassert>
+#include <cmath>
+namespace cfg {const double TRACK_EFF_MM=430;}
+namespace rotationUnits {const int deg=0;}
+struct Motor {double pos=0;bool ok=true;bool installed(){return ok;}double position(int){return pos;}} motors[6];
+struct Slot {Motor* m;bool left;} MOT[6]={{&motors[0],true},{&motors[1],true},{&motors[2],true},{&motors[3],false},{&motors[4],false},{&motors[5],false}};
+double prevPos[6]={};bool prevOk[6]={};
+const double MM_PER_MOTOR_DEG=1.;
+double encDegL=0,encDegR=0,encMmL=0,encMmR=0,tripMm=0,vMeas=0,wMeas=0;
+struct {double x=0,y=0,yaw=0;} pose;
+''' + function + r'''
 int main(){
-  static_assert(!cfg::USE_GYRO && !cfg::ENABLE_BUMPERS,"Motor-only configuration");
-  startGyroCalibration();bumperUpdate();
-  assert(!gyroCal && !gyroFault && !hl.bump);
-  assert(reads==0 && calibrations==0);
+  odomUpdate(.1);
+  for(auto& m:motors)m.pos=100;
+  odomUpdate(.1);assert(fabs(pose.x-100)<1e-9&&pose.y==0&&pose.yaw==0);
+  for(int i=3;i<6;i++)motors[i].pos+=43;
+  odomUpdate(.1);assert(fabs(pose.yaw-.1)<1e-9);
+  const double yaw=pose.yaw,x=pose.x;
+  for(auto& m:motors)m.pos-=20;
+  odomUpdate(.1);assert(fabs(pose.yaw-yaw)<1e-9&&pose.x<x);
+  // Reconnecting a motor cannot inject its absolute encoder reading as travel.
+  motors[0].ok=false;odomUpdate(.1);motors[0].pos=10000;motors[0].ok=true;
+  const double before=pose.x;odomUpdate(.1);assert(fabs(pose.x-before)<1e-9);
 }
 ''')
-    executable = tmp_path / 'sensors'
-    subprocess.run(['g++', '-std=c++11', str(test), '-o', str(executable)], check=True)
-    subprocess.run([str(executable)], check=True)
+    exe=tmp_path/'odom'
+    subprocess.run(['g++','-std=c++11',str(test),'-o',str(exe)],check=True)
+    subprocess.run([str(exe)],check=True)

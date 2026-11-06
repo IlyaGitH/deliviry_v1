@@ -1,5 +1,5 @@
 // АТСД-1М · прошивка VEX V5 Brain · протокол описан в README.md
-// Моторы: 1 FL, 10 ML, 9 RL, 19 FR, 8 MR, 20 RR. Гироскоп 276-2333 — порт A, бамперы — B, C.
+// Моторы: 1 FL, 10 ML, 9 RL, 19 FR, 8 MR, 20 RR.
 #include "vex.h"
 #include <cmath>
 #include <cstdarg>
@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.8"
+#define FW_VERSION "3.0.9"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -20,7 +20,7 @@ namespace atsd {
 #define M_PI 3.14159265358979323846
 #endif
 
-// Подстроить под робот: колесо, колея, знак гироскопа, скорости
+// Подстроить под робот: колесо, колея, скорости
 namespace cfg {
 
 const gearSetting GEARSET        = ratio18_1;
@@ -29,22 +29,7 @@ const double WHEEL_DIAM_MM       = 101.6;
 const double WHEEL_PER_MOTOR_REV = 1.0;
 const double TRACK_EFF_MM        = 430.0;
 
-// На VEX подключены только моторы: курс Brain — по встроенным энкодерам.
-// Внешний IMU подключён к Pi и обрабатывается nav_node, а не Brain.
-const bool   USE_GYRO   = false;
-const double GYRO_SIGN  = -1.0;
-const double GYRO_SCALE = 1.0;
-const double GYRO_FAULT_ENC_W  = 0.6;
-const double GYRO_FAULT_GYRO_W = 0.05;
-const uint32_t GYRO_FAULT_MS   = 800;
-const bool   GYRO_AUTO_SIGN = true;
-const double GYRO_SIGN_ENC_W  = 0.2;
-const double GYRO_SIGN_GYRO_W = 0.15;
-const double GYRO_SIGN_EVIDENCE_S = 0.3;
-const double GYRO_SPIKE_W     = 4.0;
-const double GYRO_SPIKE_STRAIGHT_W = 1.2;
-const double GYRO_BIAS_TAU_S  = 2.0;   // за сколько секунд покоя выучивается уход гироскопа
-const double STILL_ENC_MM     = 0.2;   // колесо сдвинулось меньше за такт 10 мс — стоим
+// Путь и курс Brain вычисляются по встроенным энкодерам моторов.
 
 const double V_CRUISE   = 800.0;   // мм/с — потолок скорости рейса; саму скорость задаёт Pi (v_max)
 const double V_MAX_EXT  = 900.0;
@@ -69,7 +54,7 @@ const double KP_TURN        = 2.5;
 const double W_TURN_MAX     = 1.4;
 const double W_TURN_MIN     = 0.35;
 
-// Путь строит Nav2 на Pi по лидарной карте, сюда приходит только скорость G
+// Путь по дорогам и объезд строит Pi, сюда приходит только скорость G
 const uint32_t NAV_CMD_TIMEOUT_MS = 300;
 const uint32_t NAV_LOST_MS        = 20000;
 const uint32_t ZONE_TIMEOUT_MS   = 4000;
@@ -79,6 +64,7 @@ const uint32_t STOP_HOLD_MS         = 3000;
 const double   STOP_IGNORE_MM       = 2500.0;
 const double   CROSS_ZONE_MM        = 2000.0;
 const double   CROSS_FACTOR         = 0.5;
+// BUMP в протоколе — знак «искусственная неровность», полученный от Pi.
 const double   BUMP_ZONE_MM         = 1800.0;
 const double   BUMP_FACTOR          = 0.35;
 const double   LIGHT_STOP_OFFSET_MM = 450.0;
@@ -97,11 +83,10 @@ const uint32_t STALL_TIME_MS     = 700;
 const double   TEMP_HOT_C        = 55.0;
 const double   TEMP_CRIT_C       = 65.0;
 const int      BATT_LOW_PCT      = 20;
-const bool     ENABLE_BUMPERS    = false;
 const bool     ENABLE_HEADING_HOLD = true;
 }
 
-// Точки заказа 0..3. Координаты — на Pi, в лидарной карте (points.json веб-сервера)
+// Точки заказа 0..3. Координаты — на Pi, в карте дорог (points.json веб-сервера)
 enum NodeId { N_KPP = 0, N_ADMIN, N_TEST, N_SKLAD, N_POINTS };
 
 struct Node { const char* name; };
@@ -118,10 +103,6 @@ motor mRL(PORT9,  cfg::GEARSET, false);
 motor mFR(PORT19, cfg::GEARSET, true);
 motor mMR(PORT8,  cfg::GEARSET, true);
 motor mRR(PORT20, cfg::GEARSET, true);
-
-gyro   Gyro(Brain.ThreeWirePort.A);
-bumper BumpL(Brain.ThreeWirePort.B);
-bumper BumpR(Brain.ThreeWirePort.C);
 
 struct MotorSlot { motor* m; bool left; const char* name; };
 MotorSlot MOT[6] = {
@@ -152,12 +133,6 @@ double vOut = 0, wOut = 0;
 double rpmCmd[6] = {0};
 
 bool   estop = false;
-bool   gyroCal = false, gyroResync = true, gyroFault = false;
-double gyroPrevDeg = 0, gyroSuspectMs = 0;
-double gyroSignFix = 1.0, gyroSignEvidence = 0, gyroAccum = 0;
-double gyroBias = 0;  // рад/с
-uint32_t gyroSpikes = 0;
-
 struct Stats { uint32_t rxLines = 0, rxBad = 0, rxOverflow = 0, txDrop = 0, vIgnored = 0; } stats;
 
 struct Link { uint32_t lastRx = 0; bool ok = false; bool everSeen = false; } piLink;
@@ -172,7 +147,6 @@ struct Health {
   int    hotLevel = 0;
   int    battPct = 100; int battMv = 0; bool battLowReported = false;
   uint32_t stallSince = 0; bool stall = false; bool stallPrev = false;
-  bool   bump = false, bumpPrev = false;
 } hl;
 
 enum MState { MS_IDLE, MS_TO_PICKUP, MS_WAIT_LOAD, MS_TO_DROP, MS_WAIT_UNLOAD, MS_DONE, MS_RETURN, MS_FAULT };
@@ -304,15 +278,6 @@ static void resetTravelBehaviours() {
 
 double prevPos[6]; bool prevOk[6] = {false, false, false, false, false, false};
 
-static double gyroYawDeg() { return cfg::GYRO_SIGN * cfg::GYRO_SCALE * Gyro.rotation(rotationUnits::deg); }
-
-static void startGyroCalibration() {
-  if (!cfg::USE_GYRO) { gyroCal = false; gyroFault = false; return; }
-  gyroCal = true; gyroFault = false; gyroSuspectMs = 0;
-  Gyro.calibrate();
-  logEvent("GYRO_CALIBRATING");
-}
-
 static void odomUpdate(double dt) {
   double dSum[2] = {0, 0}; int dN[2] = {0, 0};
   for (int i = 0; i < 6; i++) {
@@ -331,66 +296,7 @@ static void odomUpdate(double dt) {
   encMmL += dL; encMmR += dR;
 
   double ds = 0.5 * (dL + dR);
-  double dyawE = (dR - dL) / cfg::TRACK_EFF_MM;
-
-  double dyawG = 0; bool gValid = false;
-  if (gyroCal && !Gyro.isCalibrating()) {
-    gyroCal = false; gyroResync = true;
-    logEvent("GYRO_READY");
-  }
-  if (cfg::USE_GYRO && !gyroCal) {
-    double g = gyroYawDeg();
-    if (gyroResync) { gyroPrevDeg = g; gyroResync = false; gyroBias = 0; }
-    else { dyawG = gyroSignFix * d2r(g - gyroPrevDeg); gyroPrevDeg = g; gValid = true; }
-  }
-
-  // Гироскоп 276-2333 уходит и на месте. Пока моторы стоят и колёса не крутятся,
-  // учим этот уход и вычитаем его на ходу, а курс на покое не меняем
-  bool still = fabs(vOut) < 1.0 && fabs(wOut) < 0.01 &&
-               fabs(dL) < cfg::STILL_ENC_MM && fabs(dR) < cfg::STILL_ENC_MM;
-  if (gValid && dt > 0) {
-    if (still) gyroBias += (dt / cfg::GYRO_BIAS_TAU_S) * (dyawG / dt - gyroBias);
-    dyawG = still ? 0 : dyawG - gyroBias * dt;
-  }
-
-  if (gValid && dt > 0) {
-    double wE = dyawE / dt, wG = dyawG / dt;
-    if (cfg::GYRO_AUTO_SIGN && fabs(wE) > cfg::GYRO_SIGN_ENC_W && fabs(wG) > cfg::GYRO_SIGN_GYRO_W) {
-      gyroSignEvidence += (wE * wG < 0 ? -dt : dt);
-      if (gyroSignEvidence > 2.0) gyroSignEvidence = 2.0;
-      if (gyroSignEvidence < -cfg::GYRO_SIGN_EVIDENCE_S) {
-        gyroSignFix = -gyroSignFix;
-        gyroBias = -gyroBias;
-        gyroSignEvidence = 0;
-        dyawG = -dyawG;
-        pose.yaw -= 2.0 * gyroAccum;
-        gyroAccum = -gyroAccum;
-        holdYaw = pose.yaw;
-        logEvent("GYRO_SIGN_FLIPPED set GYRO_SIGN %+.0f", cfg::GYRO_SIGN * gyroSignFix);
-      }
-    }
-    if (fabs(wG) > cfg::GYRO_SPIKE_W || (fabs(wE) < 0.15 && fabs(wG) > cfg::GYRO_SPIKE_STRAIGHT_W)) {
-      dyawG = dyawE;
-      gyroSpikes++;
-    }
-  }
-
-  if (gValid && !gyroFault && dt > 0) {
-    double wE = dyawE / dt, wG = dyawG / dt;
-    if (fabs(wE) > cfg::GYRO_FAULT_ENC_W && fabs(wG) < cfg::GYRO_FAULT_GYRO_W) {
-      gyroSuspectMs += dt * 1000.0;
-      if (gyroSuspectMs > cfg::GYRO_FAULT_MS) {
-        gyroFault = true;
-        logEvent("GYRO_FAULT ENCODER_YAW");
-      }
-    } else if (fabs(wG) > 0.15) {
-      gyroSuspectMs = 0;
-    }
-  }
-
-  bool useGyro = gValid && !gyroFault;
-  double dyaw = useGyro ? dyawG : dyawE;
-  if (useGyro) gyroAccum += dyaw;
+  double dyaw = (dR - dL) / cfg::TRACK_EFF_MM;
   double mid = pose.yaw + 0.5 * dyaw;
   pose.x += ds * cos(mid);
   pose.y += ds * sin(mid);
@@ -454,11 +360,7 @@ static void healthUpdate() {
   hl.stallPrev = hl.stall;
 }
 
-static void bumperUpdate() {
-  hl.bump = cfg::ENABLE_BUMPERS && (BumpL.pressing() || BumpR.pressing());
-  if (hl.bump && !hl.bumpPrev) logEvent("BUMPER");
-  hl.bumpPrev = hl.bump;
-}
+
 
 static double speedFactor(bool mission) {
   double f = extLimitPct / 100.0;
@@ -546,7 +448,6 @@ static void startLeg(MState s, int goal) {
 
 static void startMission(int a, int b) {
   if (estop) { logEvent("REJECT ESTOP"); return; }
-  if (gyroCal) { logEvent("REJECT GYRO_CAL"); return; }
   if (a < 0 || a >= N_POINTS || b < 0 || b >= N_POINTS || a == b) { logEvent("REJECT BAD_POINTS"); return; }
   if (isBusy(ms.st)) { logEvent("REJECT BUSY"); return; }
   test.kind = T_NONE;
@@ -625,9 +526,9 @@ static void travelTick(double& v, double& w) {
 
   if (hl.sideDead) { missionFault("SIDE_MOTORS_DEAD"); return; }
 
-  // A bumper or stalled drivetrain is not evidence that the rear is clear.
+  // A stalled drivetrain is not evidence that the rear is clear.
   // Only Pi's lidar-checked planner may request reverse travel. Fault requires resume.
-  if (hl.stall || hl.bump) { missionFault(hl.bump ? "BUMPER" : "STALL"); return; }
+  if (hl.stall) { missionFault("STALL"); return; }
 
   double vLim = cfg::V_CRUISE * speedFactor(true);
 
@@ -692,7 +593,7 @@ static void velTick(double dt, double& v, double& w) {
   double vc = clampd(velCmd.v, -cfg::V_MAX_EXT, cfg::V_MAX_EXT) * speedFactor(false);
   double wc = clampd(velCmd.w, -cfg::W_MAX, cfg::W_MAX);
 
-  if (vc > 0 && ((obstPresent() && obst.dist < cfg::OBST_STOP_MM) || hl.bump)) vc = 0;
+  if (vc > 0 && (obstPresent() && obst.dist < cfg::OBST_STOP_MM)) vc = 0;
 
   if (!cfg::ENABLE_HEADING_HOLD || (fabs(vc) < 1.0 && fabs(wc) < 0.005)) {
     holdActive = false;
@@ -738,9 +639,7 @@ static bool testTick(double& v, double& w) {
       if ((fabs(e) < d2r(1.5) && fabs(wMeas) < 0.1) || now - test.t0 > 8000) {
         test.kind = T_NONE;
         double dyaw = pose.yaw - test.startYaw;
-        double dl = encMmL - test.startL, dr = encMmR - test.startR;
-        double track = fabs(dyaw) > 0.1 ? (dr - dl) / dyaw : 0;
-        snprintf(test.result, sizeof test.result, "gyro %+.1fdeg  TRACK_EFF est %.0fmm", r2d(dyaw), track);
+        snprintf(test.result, sizeof test.result, "encoder yaw %+.1fdeg (wheel slip not measured)", r2d(dyaw));
         return false;
       }
       w = turnRate(e);
@@ -751,7 +650,7 @@ static bool testTick(double& v, double& w) {
 }
 
 static void startTest(int kind, int idx) {
-  if (isBusy(ms.st) || estop || gyroCal) { snprintf(test.result, sizeof test.result, "busy: stop mission/estop"); return; }
+  if (isBusy(ms.st) || estop) { snprintf(test.result, sizeof test.result, "busy: stop mission/estop"); return; }
   test.kind = kind; test.motorIdx = idx; test.t0 = nowMs();
   test.until = test.t0 + 1500;
   test.startTrip = tripMm; test.startYaw = pose.yaw;
@@ -860,9 +759,7 @@ static void handleLine(char* line, bool local) {
     else if (!strcmp(c, "!TD")) startTest(T_DRIVE, -1);
     else if (!strcmp(c, "!TT")) startTest(T_TURN, -1);
     else if (!strcmp(c, "!TS")) test.kind = T_NONE;
-    else if (!strcmp(c, "!GC")) {
-      if (!isBusy(ms.st) && fabs(vMeas) < 5 && !gyroCal) startGyroCalibration();
-    } else ok = false;
+    else ok = false;
   } else {
     ok = false;
   }
@@ -879,12 +776,9 @@ static uint32_t statusFlags() {
   uint32_t f = 0;
   if (velCmd.ever && !isBusy(ms.st) && nowMs() - velCmd.last > cfg::V_WATCHDOG_MS) f |= 1u << 0;
   if (estop)          f |= 1u << 1;
-  if (gyroCal)        f |= 1u << 2;
-  if (gyroFault)      f |= 1u << 3;
   if (hl.hotLevel)    f |= 1u << 4;
   if (hl.missing)     f |= 1u << 5;
   if (hl.stall)       f |= 1u << 6;
-  if (hl.bump)        f |= 1u << 7;
   if (hl.battPct < cfg::BATT_LOW_PCT) f |= 1u << 8;
   if (isBusy(ms.st))  f |= 1u << 9;
   if (pauseMask)      f |= 1u << 10;
@@ -962,7 +856,6 @@ static bool inR(int px, int py, int x, int y, int w, int h) { return px >= x && 
 
 static const char* pauseText() {
   if (estop) return "EMERGENCY STOP";
-  if (gyroCal) return "GYRO CALIBRATING - DON'T MOVE";
   if (ms.st == MS_FAULT) return ms.faultMsg;
   if (ms.st == MS_WAIT_LOAD) return "Put cargo, lock, press CARGO OK";
   if (ms.st == MS_WAIT_UNLOAD) return "Take cargo, press CARGO OK";
@@ -1044,11 +937,11 @@ static void drawDiag() {
     uiText(4, y, C_BG, hl.inst[i] ? (hl.temp[i] >= cfg::TEMP_HOT_C ? C_YELLOW : color::white) : C_RED, fontType::mono15, b);
     y += 14;
   }
-  snprintf(b, sizeof b, "YAW %+8.1f gyro %s w %+.2f drift %+.2f/s", r2d(pose.yaw), !cfg::USE_GYRO ? "OFF(ENC)" : gyroCal ? "CAL" : (gyroFault ? "FAULT>ENC" : (gyroSignFix < 0 ? "SIGN FLIP" : "OK")), wMeas, r2d(gyroBias));
-  uiText(4, y, C_BG, gyroFault ? C_RED : color::white, fontType::mono15, b); y += 14;
+  snprintf(b, sizeof b, "YAW %+8.1f ENC w %+.2f", r2d(pose.yaw), wMeas);
+  uiText(4, y, C_BG, color::white, fontType::mono15, b); y += 14;
   snprintf(b, sizeof b, "X %.0f Y %.0f  trip %.1fm  v %.0f", pose.x, pose.y, tripMm / 1000.0, vMeas);
   uiText(4, y, C_BG, color::white, fontType::mono15, b); y += 14;
-  snprintf(b, sizeof b, "BAT %d%% %dmV  bump %d stall %d", hl.battPct, hl.battMv, hl.bump ? 1 : 0, hl.stall ? 1 : 0);
+  snprintf(b, sizeof b, "BAT %d%% %dmV  stall %d", hl.battPct, hl.battMv, hl.stall ? 1 : 0);
   uiText(4, y, C_BG, color::white, fontType::mono15, b); y += 14;
   snprintf(b, sizeof b, "PI %s rx %lu bad %lu drop %lu vIgn %lu", piLink.ok ? "OK" : "--", (unsigned long)stats.rxLines,
            (unsigned long)stats.rxBad, (unsigned long)stats.txDrop, (unsigned long)stats.vIgnored);
@@ -1066,7 +959,6 @@ static void drawDiag() {
 static void drawTest() {
   for (int i = 0; i < 6; i++)
     uiButton((i % 3) * 160, 4 + (i / 3) * 50, 155, 45, test.kind == T_MOTOR && test.motorIdx == i ? C_ORANGE : C_PANEL, MOT[i].name);
-  uiButton(0, 106, 116, 45, C_PANEL, "GYRO CAL", fontType::mono15);
   uiButton(121, 106, 116, 45, test.kind == T_DRIVE ? C_ORANGE : C_PANEL, "DRIVE 1M", fontType::mono15);
   uiButton(242, 106, 116, 45, test.kind == T_TURN ? C_ORANGE : C_PANEL, "TURN 90", fontType::mono15);
   uiButton(363, 106, 116, 45, C_RED, "STOP", fontType::mono15);
@@ -1097,7 +989,6 @@ static void uiTouch(int x, int y) {
       break;
     case PG_TEST:
       for (int i = 0; i < 6; i++) if (inR(x, y, (i % 3) * 160, 4 + (i / 3) * 50, 155, 45)) localCmd("!TM %d", i);
-      if (inR(x, y, 0, 106, 116, 45)) localCmd("!GC");
       if (inR(x, y, 121, 106, 116, 45)) localCmd("!TD");
       if (inR(x, y, 242, 106, 116, 45)) localCmd("!TT");
       if (inR(x, y, 363, 106, 116, 45)) localCmd("!TS");
@@ -1168,14 +1059,7 @@ int run() {
 
   Brain.Screen.clearScreen(C_BG);
   uiText(20, 60, C_BG, color::white, fontType::mono30, "ATSD-1M  fw " FW_VERSION);
-  if (cfg::USE_GYRO) {
-    uiText(20, 120, C_BG, C_YELLOW, fontType::mono30, "GYRO CALIBRATION");
-    uiText(20, 160, C_BG, C_YELLOW, fontType::mono20, "do not move the robot");
-  } else {
-    uiText(20, 120, C_BG, color::white, fontType::mono30, "MOTORS / ENCODERS");
-  }
-  this_thread::sleep_for(500);
-  startGyroCalibration();
+  uiText(20, 120, C_BG, color::white, fontType::mono30, "MOTORS / ENCODERS");
 
   thread rx(rxThread);
   thread ui(uiThread);
@@ -1198,7 +1082,6 @@ int run() {
 
     odomUpdate(dt);
     if (tick % 10 == 0) healthUpdate();
-    bumperUpdate();
     piLink.ok = piLink.everSeen && (now - piLink.lastRx) < cfg::LINK_TIMEOUT_MS;
     if (piLink.ok != linkPrev) { logEvent(piLink.ok ? "LINK_OK" : "LINK_LOST"); linkPrev = piLink.ok; }
 
@@ -1206,7 +1089,7 @@ int run() {
     bool motorTest = false;
     bool manual = Ctl.installed() && Ctl.ButtonL1.pressing() && !isTravel(ms.st);
 
-    if (estop || gyroCal) {
+    if (estop) {
       pauseMask = estop ? P_ESTOP : 0;
       if (isTravel(ms.st)) nav.idleSince = now;
     } else if (manual) {
@@ -1228,7 +1111,7 @@ int run() {
       holdActive = false;
     }
 
-    if (estop || gyroCal) {
+    if (estop) {
       vOut = wOut = 0;
       stopAll();
     } else if (motorTest) {
