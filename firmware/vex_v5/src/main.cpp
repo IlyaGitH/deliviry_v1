@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.7"
+#define FW_VERSION "3.0.8"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -29,8 +29,8 @@ const double WHEEL_DIAM_MM       = 101.6;
 const double WHEEL_PER_MOTOR_REV = 1.0;
 const double TRACK_EFF_MM        = 430.0;
 
-// false — курс только по энкодерам (лидар поправляет повороты). Старый гироскоп 276-2333
-// уходит так, что робот крутится на месте и его уводит при езде прямо
+// На VEX подключены только моторы: курс Brain — по встроенным энкодерам.
+// Внешний IMU подключён к Pi и обрабатывается nav_node, а не Brain.
 const bool   USE_GYRO   = false;
 const double GYRO_SIGN  = -1.0;
 const double GYRO_SCALE = 1.0;
@@ -97,7 +97,7 @@ const uint32_t STALL_TIME_MS     = 700;
 const double   TEMP_HOT_C        = 55.0;
 const double   TEMP_CRIT_C       = 65.0;
 const int      BATT_LOW_PCT      = 20;
-const bool     ENABLE_BUMPERS    = true;
+const bool     ENABLE_BUMPERS    = false;
 const bool     ENABLE_HEADING_HOLD = true;
 }
 
@@ -307,6 +307,7 @@ double prevPos[6]; bool prevOk[6] = {false, false, false, false, false, false};
 static double gyroYawDeg() { return cfg::GYRO_SIGN * cfg::GYRO_SCALE * Gyro.rotation(rotationUnits::deg); }
 
 static void startGyroCalibration() {
+  if (!cfg::USE_GYRO) { gyroCal = false; gyroFault = false; return; }
   gyroCal = true; gyroFault = false; gyroSuspectMs = 0;
   Gyro.calibrate();
   logEvent("GYRO_CALIBRATING");
@@ -1167,8 +1168,12 @@ int run() {
 
   Brain.Screen.clearScreen(C_BG);
   uiText(20, 60, C_BG, color::white, fontType::mono30, "ATSD-1M  fw " FW_VERSION);
-  uiText(20, 120, C_BG, C_YELLOW, fontType::mono30, "GYRO CALIBRATION");
-  uiText(20, 160, C_BG, C_YELLOW, fontType::mono20, "do not move the robot");
+  if (cfg::USE_GYRO) {
+    uiText(20, 120, C_BG, C_YELLOW, fontType::mono30, "GYRO CALIBRATION");
+    uiText(20, 160, C_BG, C_YELLOW, fontType::mono20, "do not move the robot");
+  } else {
+    uiText(20, 120, C_BG, color::white, fontType::mono30, "MOTORS / ENCODERS");
+  }
   this_thread::sleep_for(500);
   startGyroCalibration();
 

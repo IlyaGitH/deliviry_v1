@@ -103,3 +103,32 @@ int main(){
     executable = tmp_path / 'travel'
     subprocess.run(['g++', '-std=c++11', str(test), '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)
+
+
+def test_motor_only_configuration_never_reads_missing_adi_sensors(tmp_path):
+    source = (Path(__file__).resolve().parents[3] / 'firmware/vex_v5/src/main.cpp').read_text()
+    import re
+    declarations = '\n'.join(re.findall(r'const bool\s+(?:USE_GYRO|ENABLE_BUMPERS)\s*=.*?;', source))
+    functions = ''
+    for prefix in ('static void startGyroCalibration', 'static void bumperUpdate'):
+        functions += prefix + source.split(prefix, 1)[1].split('\n}', 1)[0] + '\n}\n'
+    test = tmp_path / 'sensors.cpp'
+    test.write_text('#include <cassert>\nnamespace cfg {' + declarations + '}\n' + r'''
+int reads=0, calibrations=0;
+struct {void calibrate(){calibrations++;}} Gyro;
+struct Bumper {bool pressing(){reads++;return true;}} BumpL,BumpR;
+bool gyroCal=true,gyroFault=true;
+double gyroSuspectMs=0;
+struct {bool bump=false,bumpPrev=false;} hl;
+void logEvent(const char*){}
+''' + functions + r'''
+int main(){
+  static_assert(!cfg::USE_GYRO && !cfg::ENABLE_BUMPERS,"Motor-only configuration");
+  startGyroCalibration();bumperUpdate();
+  assert(!gyroCal && !gyroFault && !hl.bump);
+  assert(reads==0 && calibrations==0);
+}
+''')
+    executable = tmp_path / 'sensors'
+    subprocess.run(['g++', '-std=c++11', str(test), '-o', str(executable)], check=True)
+    subprocess.run([str(executable)], check=True)
