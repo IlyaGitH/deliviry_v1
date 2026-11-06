@@ -20,9 +20,9 @@ ONESHOT_LEN = {'beep': 0.2, 'double': 0.4, 'start': 1.0, 'arrive': 1.2}
 
 @dataclass
 class SignalConfig:
-    head_moving: float = 1.0
+    head_moving: float = 0.4
     head_drl: float = 0.3
-    strip_level: float = 1.0
+    strip_level: float = 0.4
     strip_idle: float = 0.3
     approach_m: float = 1.8
     crosswalk_beep_s: float = 4.0

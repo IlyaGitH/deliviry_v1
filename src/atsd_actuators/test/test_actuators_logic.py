@@ -17,7 +17,7 @@ def test_signal_rules():
     L = SignalLogic()
     moving = Inputs(link=True, state='TO_DROP')
     o = L.decide(moving, 0.0)
-    assert (o.mode, o.buzzer, o.head) == ('beacon', 'off', 1.0)
+    assert (o.mode, o.buzzer, o.head, o.strip) == ('beacon', 'off', 0.4, 0.4)
     assert L.decide(Inputs(link=True, state='TO_DROP', obstacle_m=1.2), 0).buzzer == 'approach'
     assert L.decide(Inputs(link=True, state='TO_DROP', pause=['red_light']), 0).mode == 'blink'
     assert L.decide(Inputs(link=True, state='TO_DROP', flags=['recovery']), 0).buzzer == 'reverse'

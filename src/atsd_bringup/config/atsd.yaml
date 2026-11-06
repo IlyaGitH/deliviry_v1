@@ -56,8 +56,8 @@ light_node:
     headlight_pin: 18
     strip_pin: 13
     pwm_freq_hz: 200
-    headlight_ceiling: 0.6   # шина 12 В ~1,4 А
-    strip_ceiling: 0.5
+    headlight_ceiling: 0.4   # максимум 40% PWM для снижения нагрузки
+    strip_ceiling: 0.4
     ramp_time_s: 0.5
     blink_period_s: 1.0
     beacon_period_s: 0.35
@@ -87,9 +87,9 @@ signal_node:
   ros__parameters:
     enabled: true
     tick_hz: 5.0
-    head_moving: 1.0
+    head_moving: 0.4
     head_drl: 0.3
-    strip_level: 1.0
+    strip_level: 0.4
     strip_idle: 0.3
     approach_m: 1.8
     crosswalk_beep_s: 4.0
