@@ -46,6 +46,12 @@ link_ok() {
 }
 
 start_ap() {
+  local -a channel_args=()
+  # Для автоматического выбора оставляем свойство незаданным:
+  # nmcli отвергает явно переданный channel 0 при создании AP.
+  if [[ ${AP_CHANNEL} != 0 ]]; then
+    channel_args=(802-11-wireless.channel "${AP_CHANNEL}")
+  fi
   if (( ${#AP_PASS} < 8 )); then
     echo "AP_PASS в ${CONF} короче 8 символов — точка доступа не поднята"
     return 1
@@ -53,7 +59,7 @@ start_ap() {
   # Профиль пересоздаём каждый раз, чтобы правки wifi.conf применялись без ручной чистки
   nmcli con delete "${AP}" >/dev/null 2>&1
   nmcli con add type wifi ifname "${IFACE}" con-name "${AP}" autoconnect no ssid "${AP_SSID}" \
-        802-11-wireless.mode ap 802-11-wireless.band "${AP_BAND}" 802-11-wireless.channel "${AP_CHANNEL}" \
+        802-11-wireless.mode ap 802-11-wireless.band "${AP_BAND}" "${channel_args[@]}" \
         802-11-wireless.powersave 2 \
         ipv4.method shared ipv4.addresses "${AP_ADDR}" ipv6.method disabled \
         wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn \

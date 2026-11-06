@@ -65,3 +65,51 @@ def test_stable_known_network_keeps_connection():
       main
     ''')
     assert 'AP_STARTED' not in out
+
+
+def test_ap_auto_channel_avoids_nmcli_zero_channel_rejection():
+    out = run('''
+      AP_PASS=test-password; activated=0
+      nmcli() {
+        if [[ "$1 $2" == 'con add' ]]; then
+          while (($#)); do
+            if [[ "$1" == 802-11-wireless.channel ]]; then
+              echo 'Unexpected explicit channel' >&2
+              return 1
+            fi
+            shift
+          done
+        elif [[ "$1 $2" == 'con up' ]]; then
+          activated=1
+        fi
+        return 0
+      }
+      start_ap || exit 1
+      [[ $activated == 1 ]] || exit 1
+      echo SUCCESS
+    ''')
+    assert 'SUCCESS' in out
+
+
+def test_ap_fixed_channel_is_preserved():
+    out = run('''
+      AP_PASS=test-password; AP_CHANNEL=6
+      found=0; activated=0
+      nmcli() {
+        if [[ "$1 $2" == 'con add' ]]; then
+          while (($#)); do
+            if [[ "$1" == 802-11-wireless.channel && "$2" == 6 ]]; then
+              found=1
+            fi
+            shift
+          done
+        elif [[ "$1 $2" == 'con up' ]]; then
+          activated=1
+        fi
+        return 0
+      }
+      start_ap || exit 1
+      [[ $found == 1 && $activated == 1 ]] || exit 1
+      echo SUCCESS
+    ''')
+    assert 'SUCCESS' in out
