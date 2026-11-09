@@ -39,8 +39,8 @@ class LocalCfg:
     step: float = .40
     max_nodes: int = 700
     budget_s: float = .04
-    short_reverse_m: float = 1.5  # prefer backing to a nearby goal behind the robot
-    max_reverse_m: float = 3.0
+    short_reverse_m: float = 5.0  # prefer backing to a nearby goal behind the robot
+    max_reverse_m: float = 5.0
     stall_s: float = 3.0
     max_avoid_s: float = 120.0
 
