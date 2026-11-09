@@ -221,3 +221,40 @@ def test_short_reverse_waits_for_stop_and_respects_rear_obstacle():
     cfg.allow_reverse = False
     d = command(LocalPlanner(cfg), space(cfg=cfg), goal=(-1.,0.), preferred=(.25,.5))
     assert d.v >= 0
+
+
+def test_clear_route_uses_cruise_speed_but_requires_full_proposed_stop():
+    cfg = LocalCfg(cruise_speed=.8)
+    d = command(LocalPlanner(cfg), space(cfg=cfg), preferred=(.8,0.))
+    assert d.state == 'following' and d.v == .8
+    # At rest, current braking distance is zero. A short free horizon still
+    # must not authorize acceleration to .8 m/s in front of a wall.
+    d = command(LocalPlanner(cfg), space(rectangle(2.,-3.,2.1,3.),cfg), preferred=(.8,0.))
+    assert d.v <= cfg.forward_speed
+
+
+def test_clear_route_can_end_avoidance_before_timeout_fault():
+    p = LocalPlanner()
+    p.mode = 'avoid'; p.avoid_started = 1.
+    d = command(p, space(), now=200., preferred=(.8,0.))
+    assert d.state == 'following' and p.avoid_started is None
+
+
+def test_near_lookahead_does_not_force_reverse_on_distant_route():
+    p = LocalPlanner(LocalCfg(radius=.5))
+    d = command(p, space(cfg=p.cfg), goal=(-.1,4.), preferred=(.25,.5),
+                short_reverse_allowed=False)
+    assert d.state == 'following' and d.v > 0
+
+
+def test_clear_arc_orbiting_goal_is_not_accepted_as_route_recovery():
+    p = LocalPlanner()
+    d = command(p, space(), goal=(0.,1.), preferred=(.25,.25))
+    assert d.state != 'following'
+
+
+def test_short_reverse_does_not_bypass_expired_attempt():
+    p = LocalPlanner()
+    p.avoid_started = 1.
+    d = command(p, space(), now=200., goal=(-1.,0.))
+    assert d.state == 'escape_timeout' and d.v == 0.

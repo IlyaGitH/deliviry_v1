@@ -29,6 +29,7 @@ class LocalCfg:
     resolution: float = .10
     extent: float = 7.0
     radius: float = 1.0
+    cruise_speed: float = .8
     forward_speed: float = .25
     reverse_speed: float = .15
     allow_reverse: bool = True  # user verified unobstructed 360-degree lidar coverage
@@ -46,7 +47,7 @@ class LocalCfg:
 
     def __post_init__(self):
         positive = (self.front, self.rear, self.half_width, self.margin, self.resolution,
-                    self.extent, self.radius, self.forward_speed, self.reverse_speed,
+                    self.extent, self.radius, self.cruise_speed, self.forward_speed, self.reverse_speed,
                     self.deceleration, self.step, self.scan_timeout, self.odom_timeout,
                     self.budget_s, self.short_reverse_m, self.max_reverse_m, self.stall_s, self.max_avoid_s)
         if not all(math.isfinite(x) and x > 0 for x in positive):
@@ -189,7 +190,7 @@ class LocalPlanner:
         return (round(p[0]/.2), round(p[1]/.2), round(wrap(p[2])/(math.pi/12)))
 
     def decide(self, space, pose, goal, now, scan_age, measured_v=0., measured_w=0.,
-               odom_age=0., world_pose=None, preferred=None):
+               odom_age=0., world_pose=None, preferred=None, short_reverse_allowed=True):
         c = self.cfg
         world = tuple(world_pose if world_pose is not None else pose)
         if (not all(math.isfinite(x) for x in (*pose, *goal, *world, now, measured_v, measured_w, scan_age, odom_age)) or
@@ -227,9 +228,7 @@ class LocalPlanner:
         if math.dist(pose[:2], goal) < .25:
             self.command = (0., 0.)
             return Decision(state='local_goal')
-        if self.avoid_started is not None and now-self.avoid_started > c.max_avoid_s:
-            self.command = (0., 0.)
-            return Decision(state='escape_timeout')
+        attempt_expired = self.avoid_started is not None and now-self.avoid_started > c.max_avoid_s
         reverse_ok = c.allow_reverse and c.max_reverse_m-self.reverse_distance > stop_d+.05
         # A nearby goal behind us should not trigger a forward U-turn merely
         # because that forward arc is clear. Check a reverse arc first.
@@ -237,7 +236,7 @@ class LocalPlanner:
         gx = math.cos(pose[2])*dx + math.sin(pose[2])*dy
         gy = -math.sin(pose[2])*dx + math.cos(pose[2])*dy
         distance = math.hypot(gx, gy)
-        if reverse_ok and gx < 0 and distance <= c.short_reverse_m:
+        if not attempt_expired and short_reverse_allowed and reverse_ok and gx < 0 and distance <= c.short_reverse_m:
             k = 2*gy/(distance*distance)
             speed = c.reverse_speed
             reverse_stop = speed*(scan_age+c.latency) + speed**2/(2*c.deceleration)
@@ -254,13 +253,19 @@ class LocalPlanner:
         if preferred is not None:
             v, w = preferred
             if v > 0:
-                v = min(v, c.forward_speed)
+                v = min(v, c.cruise_speed)
                 k = preferred[1]/preferred[0]
                 # A short clear corridor is not evidence we have escaped a cul-de-sac.
                 # Rejoining requires a longer checked sweep, otherwise we'd alternate
                 # backing out and immediately driving back into the same dead end.
                 horizon = min(math.dist(pose[:2], goal), 4.5) if self.mode == 'avoid' else 1.2
-                if abs(k) <= 1/c.radius + 1e-6 and space.arc(pose, max(horizon, stop_d+.5), k, planning=True) is not None:
+                # Validate braking at the REQUESTED speed before acceleration.
+                target_stop = v*(scan_age+c.latency) + v*v/(2*c.deceleration)
+                # A clear arc that circles around a nearby goal is not route
+                # recovery. Let local search choose a manoeuvre that approaches it.
+                progress_pose = advance(pose, min(c.step, distance), k)
+                approaches = math.dist(progress_pose[:2], goal) < distance-.01
+                if approaches and abs(k) <= 1/c.radius + 1e-6 and space.arc(pose, max(horizon, stop_d+.5, target_stop+.1), k, planning=True) is not None:
                     self.commit = None
                     self.avoid_started = None
                     if self.follow_anchor is None:
@@ -269,6 +274,9 @@ class LocalPlanner:
                         self.reverse_distance = 0.
                         self.history.clear()
                     return self._command(v, v*k, measured_v, measured_w, 'following', 0, ())
+        if attempt_expired:
+            self.command = (0., 0.)
+            return Decision(state='escape_timeout')
         self.follow_anchor = None
         if self.avoid_started is None:
             self.avoid_started = now

@@ -78,6 +78,7 @@ class NavNode(Node):
             half_width=float(p('robot_half_width_m')), margin=float(p('obstacle_margin_m')),
             short_reverse_m=float(p('short_reverse_m')),
             radius=float(p('turn_radius_m')), allow_reverse=bool(p('local_allow_reverse')),
+            cruise_speed=float(p('v_max')),
             forward_speed=float(p('avoid_speed_m_s')), reverse_speed=float(p('reverse_speed_m_s')),
             max_reverse_m=float(p('reverse_limit_m'))))
         self.laser = (float(p('laser_x')), float(p('laser_y')), math.radians(float(p('laser_yaw_deg'))))
@@ -310,7 +311,10 @@ class NavNode(Node):
         # During a detour lane/map corrections would pull the estimated robot
         # sideways back onto the road. Odometry/IMU continue normally.
         detouring = self.local.mode == 'avoid'
-        v, w, done = self.nav.tick(lane, correct_lane=not detouring, strict_arrival=True)
+        # A single edge gives no measured lane width; keep it diagnostic only.
+        trusted_lane = lane is not None and lane.get('lines', 0) >= 2
+        v, w, done = self.nav.tick(lane if trusted_lane else None,
+                                  correct_lane=not detouring and trusted_lane, strict_arrival=True)
         if done:
             self.finish(True)
             return
@@ -324,13 +328,14 @@ class NavNode(Node):
             c, sn = math.cos(current[2]), math.sin(current[2])
             goal_scan = (current[0]+c*goal_body[0]-sn*goal_body[1],
                          current[1]+sn*goal_body[0]+c*goal_body[1])
-            p0, bearing = self.nav.follower.segment()
-            side = abs(-math.sin(bearing)*(self.nav.filter.X[0]-p0[0]) +
-                       math.cos(bearing)*(self.nav.filter.X[1]-p0[1]))
-            rejoined = side < .25 and abs(wrap(self.nav.filter.X[2]-bearing)) < .15
+            # Recovery must be allowed to steer TOWARDS the road before the
+            # robot is already perfectly aligned with it.
+            final_near = (self.nav.follower.i == len(self.nav.follower.path)-2 and
+                          math.dist(self.nav.filter.X[:2], self.nav.follower.path[-1])
+                          <= self.local.cfg.short_reverse_m)
             decision = self.local.decide(self.space, current, goal_scan, now, now-self.scan_t,
                                          self.v_odom, self.w_odom, now-self.odom_t, self.odom,
-                                         preferred=(v, w) if not detouring or rejoined else None)
+                                         preferred=(v, w), short_reverse_allowed=final_near)
         # Planning consumes time too: do not freshly stamp an expired observation.
         checked_now = time.monotonic()
         if decision.v and (checked_now-self.scan_t > self.local.cfg.scan_timeout or

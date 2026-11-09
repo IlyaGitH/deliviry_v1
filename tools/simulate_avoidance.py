@@ -109,9 +109,13 @@ def run(name, data, duration=100., cfg=None):
     blocked_since=None; outcome='time_limit'
     original_segments=segments
     snapshots=[]
+    moving_obstacle = None
     for tick in range(int(duration*10)):
         now=tick*.1
-        segments = original_segments + (rectangle(1.7,-.5,2.,.5) if name=='moving_front' and 4.<=now<10. else [])
+        if name == 'moving_front' and now >= 4. and moving_obstacle is None:
+            # Place the new obstacle ahead, not inside the faster robot.
+            moving_obstacle = rectangle(pose[0]+2., pose[1]-.5, pose[0]+2.3, pose[1]+.5)
+        segments = original_segments + (moving_obstacle if name=='moving_front' and 4.<=now<10. else [])
         if tick%2==0 and not (name=='scan_loss' and 4.<=now<6.):
             anchor=pose; scan_t=now
             ranges = np.full(455,np.nan) if name=='invalid_ranges' and 4.<=now<6. else raycast(pose,segments)
@@ -121,12 +125,11 @@ def run(name, data, duration=100., cfg=None):
         nav.filter.X[:] = pose
         preferred_v, preferred_w, done = nav.tick(None, correct_lane=planner.mode!='avoid', strict_arrival=True)
         local_goal = nav.follower._lookahead(pose[:2], 4.5)
-        p0, bearing = nav.follower.segment()
-        side = abs(-math.sin(bearing)*(pose[0]-p0[0])+math.cos(bearing)*(pose[1]-p0[1]))
-        rejoined = side < .25 and abs(wrap(pose[2]-bearing)) < .15
-        preferred = (preferred_v,preferred_w) if planner.mode!='avoid' or rejoined else None
+        preferred = (preferred_v, preferred_w)
+        final_near = (nav.follower.i == len(nav.follower.path)-2 and
+                      math.dist(pose[:2], goal) <= cfg.short_reverse_m)
         odom_age = now-4. if name=='odom_loss' and 4.<=now<6. else 0.
-        d=planner.decide(space,local,relative(local_goal,anchor),now,now-scan_t,v,w,odom_age,pose,preferred)
+        d=planner.decide(space,local,relative(local_goal,anchor),now,now-scan_t,v,w,odom_age,pose,preferred,short_reverse_allowed=final_near)
         if abs(d.v)>.01: blocked_since=None
         elif blocked_since is None: blocked_since=now
         times.append((time.perf_counter()-t)*1000)

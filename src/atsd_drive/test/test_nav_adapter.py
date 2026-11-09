@@ -124,3 +124,32 @@ def test_production_graph_without_roads_fails_instead_of_driving_direct(adapter)
     assert node.result==(('TO_DROP','goal'),False)
     assert not node.nav.active
     node.publish_command.assert_called_with()
+
+
+def test_recovery_off_road_still_proposes_route_command(adapter):
+    _, node, _ = adapter
+    node.on_scan(scan())
+    node.local.mode = 'avoid'
+    node.nav.filter.X[1] = 1.
+    node.local.decide = Mock(return_value=Decision(.25,0.,'following'))
+    node.tick()
+    assert node.local.decide.call_args.kwargs['preferred'] is not None
+
+
+def test_single_false_lane_cannot_steer_straight_route(adapter):
+    _, node, clock = adapter
+    node.on_scan(scan())
+    node.lane_t = clock[0]
+    node.lane = {'lines':1, 'offset':-1.7, 'angle':.1}
+    node.local.decide = Mock(return_value=Decision(.25,0.,'following'))
+    node.tick()
+    assert node.local.decide.call_args.kwargs['preferred'][1] == 0.
+
+
+def test_reverse_preference_uses_final_distance_not_lookahead(adapter):
+    _, node, _ = adapter
+    node.nav.plan((20.,0.))
+    node.on_scan(scan())
+    node.local.decide = Mock(return_value=Decision(.25,0.,'following'))
+    node.tick()
+    assert not node.local.decide.call_args.kwargs['short_reverse_allowed']
