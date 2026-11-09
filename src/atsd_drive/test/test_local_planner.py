@@ -201,3 +201,23 @@ def test_real_packet_raster_in_empty_space_never_interrupts_motion(spacing):
         decision = command(LocalPlanner(), space(ranges=ranges), preferred=(.25, 0.))
         assert decision.state == 'following', (spacing, phase, decision)
         assert decision.v == .25
+
+
+def test_nearby_rear_goal_preferred_over_clear_forward_turn():
+    cfg = LocalCfg(radius=.5)
+    d = command(LocalPlanner(cfg), space(cfg=cfg), goal=(-1., .2), preferred=(.25, .5))
+    assert d.v == -.15 and d.w < 0 and abs(d.w/d.v) <= 2.
+
+
+def test_short_reverse_waits_for_stop_and_respects_rear_obstacle():
+    cfg = LocalCfg(radius=.5)
+    p = LocalPlanner(cfg)
+    d = command(p, space(cfg=cfg), goal=(-1., 0.), preferred=(.25,.5), measured_v=.1)
+    assert d.state == 'gear_stop' and d.v == 0
+    # Backing arc must not be authorized through a wall behind the body.
+    d = command(LocalPlanner(cfg), space(rectangle(-.85,-2.,-.75,2.),cfg),
+                goal=(-1.,0.), preferred=(.25,.5))
+    assert d.v >= 0
+    cfg.allow_reverse = False
+    d = command(LocalPlanner(cfg), space(cfg=cfg), goal=(-1.,0.), preferred=(.25,.5))
+    assert d.v >= 0

@@ -44,7 +44,7 @@ class NavNode(Node):
         d('odom_frame', 'odom')
         d('v_max', 0.5)
         d('arrive_m', 0.3)
-        d('turn_radius_m', 1.0)
+        d('turn_radius_m', 0.5)
         d('turn_speed_m_s', 0.25)
         d('local_allow_reverse', True)
         d('robot_front_m', 0.35)
@@ -54,6 +54,7 @@ class NavNode(Node):
         d('avoid_speed_m_s', 0.25)
         d('reverse_speed_m_s', 0.15)
         d('reverse_limit_m', 3.0)
+        d('short_reverse_m', 1.5)
         d('blocked_timeout_s', 30.0)
         d('laser_x', 0.29)
         d('laser_y', 0.0)
@@ -75,6 +76,7 @@ class NavNode(Node):
         self.local = LocalPlanner(LocalCfg(
             front=float(p('robot_front_m')), rear=float(p('robot_rear_m')),
             half_width=float(p('robot_half_width_m')), margin=float(p('obstacle_margin_m')),
+            short_reverse_m=float(p('short_reverse_m')),
             radius=float(p('turn_radius_m')), allow_reverse=bool(p('local_allow_reverse')),
             forward_speed=float(p('avoid_speed_m_s')), reverse_speed=float(p('reverse_speed_m_s')),
             max_reverse_m=float(p('reverse_limit_m'))))

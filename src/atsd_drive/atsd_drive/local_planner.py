@@ -39,6 +39,7 @@ class LocalCfg:
     step: float = .40
     max_nodes: int = 700
     budget_s: float = .04
+    short_reverse_m: float = 1.5  # prefer backing to a nearby goal behind the robot
     max_reverse_m: float = 3.0
     stall_s: float = 3.0
     max_avoid_s: float = 120.0
@@ -47,7 +48,7 @@ class LocalCfg:
         positive = (self.front, self.rear, self.half_width, self.margin, self.resolution,
                     self.extent, self.radius, self.forward_speed, self.reverse_speed,
                     self.deceleration, self.step, self.scan_timeout, self.odom_timeout,
-                    self.budget_s, self.max_reverse_m, self.stall_s, self.max_avoid_s)
+                    self.budget_s, self.short_reverse_m, self.max_reverse_m, self.stall_s, self.max_avoid_s)
         if not all(math.isfinite(x) and x > 0 for x in positive):
             raise ValueError('Local planner dimensions, speeds and limits must be positive and finite')
         if self.radius <= self.half_width or not math.isfinite(self.latency) or self.latency < 0 or self.max_nodes < 1:
@@ -230,6 +231,25 @@ class LocalPlanner:
             self.command = (0., 0.)
             return Decision(state='escape_timeout')
         reverse_ok = c.allow_reverse and c.max_reverse_m-self.reverse_distance > stop_d+.05
+        # A nearby goal behind us should not trigger a forward U-turn merely
+        # because that forward arc is clear. Check a reverse arc first.
+        dx, dy = goal[0]-pose[0], goal[1]-pose[1]
+        gx = math.cos(pose[2])*dx + math.sin(pose[2])*dy
+        gy = -math.sin(pose[2])*dx + math.cos(pose[2])*dy
+        distance = math.hypot(gx, gy)
+        if reverse_ok and gx < 0 and distance <= c.short_reverse_m:
+            k = 2*gy/(distance*distance)
+            speed = c.reverse_speed
+            reverse_stop = speed*(scan_age+c.latency) + speed**2/(2*c.deceleration)
+            sweep = max(c.step, reverse_stop)
+            if (abs(k) <= 1/c.radius and
+                    sweep <= c.max_reverse_m-self.reverse_distance and
+                    space.arc(pose, -sweep, k, planning=True) is not None):
+                self.commit = None
+                self.follow_anchor = None
+                if self.avoid_started is None:
+                    self.avoid_started = now
+                return self._command(-speed, -speed*k, measured_v, measured_w, 'avoid', 0, ())
         # Normal road/lane following can pass through if its complete near-term sweep is known free.
         if preferred is not None:
             v, w = preferred
