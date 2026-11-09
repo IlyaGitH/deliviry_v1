@@ -188,3 +188,16 @@ def test_first_reverse_command_waits_for_existing_forward_motion():
     p=LocalPlanner(LocalCfg(max_nodes=80,budget_s=5.))
     d=command(p,space(rectangle(.95,-1.,1.,1.)),measured_v=.1)
     assert d.state=='gear_stop' and d.v==d.w==0.
+
+
+@pytest.mark.parametrize('spacing', [.8, .9, 1.0])
+def test_real_packet_raster_in_empty_space_never_interrupts_motion(spacing):
+    from atsd_sensors.lidar_logic import bins_from_packets
+
+    for phase in np.linspace(0, 12*spacing, 60, endpoint=False):
+        starts = np.arange(phase, phase+360, 12*spacing) % 360
+        ranges, _, _ = bins_from_packets(
+            starts, (starts+11*spacing) % 360, [bytes(36)]*len(starts), 455)
+        decision = command(LocalPlanner(), space(ranges=ranges), preferred=(.25, 0.))
+        assert decision.state == 'following', (spacing, phase, decision)
+        assert decision.v == .25

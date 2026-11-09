@@ -9,6 +9,8 @@ def bins_from_packets(starts, ends, payloads, n, invert=True, offset=0.0, range_
                       min_q=0, crop=()):
     """starts/ends — углы пакетов (°), payloads — 36 байт точек каждого. -> (ranges[n], intensities[n], точек).
     Ближайшая точка; полученный луч без возврата — inf, отсутствующий/закрытый сектор — NaN."""
+    if not len(payloads):
+        return np.full(n, np.nan), np.zeros(n), 0
     data = np.frombuffer(b''.join(payloads), _POINT).reshape(len(payloads), POINTS)
     s, e = np.asarray(starts, float), np.asarray(ends, float)
     step = ((e - s) % 360.0) / (POINTS - 1)
@@ -23,15 +25,34 @@ def bins_from_packets(starts, ends, payloads, n, invert=True, offset=0.0, range_
     bin_angle = -180. + (np.arange(n)+.5)*360./n
     sensor_angle = ((-bin_angle if invert else bin_angle) + (offset if invert else -offset)) % 360.
     spans = ((e-s) % 360.)[:, None]
-    covered = np.any((sensor_angle[None, :]-s[:, None]) % 360. <= spans+360./n, axis=0)
+    # Bridge only the ordinary one-ray interval between adjacent packets.
+    # Extending by raster width alone leaves holes when the lidar spins faster.
+    coverage_width = spans + np.maximum(step[:, None], 360./n)
+    covered = np.any((sensor_angle[None, :]-s[:, None]) % 360. <= coverage_width+1e-9, axis=0)
     unknown_idx = np.minimum(((a[(data['d'] > 0) & ((data['q'] < min_q) | (d < range_min))]+180.)/360.*n).astype(int), n-1)
+    # Empty raster bins inside a received sector inherit the nearest measured
+    # ray, not unconditional infinity. Native ray spacing can exceed bin width;
+    # this is normal sampling, not a lost packet. Preserve invalid returns.
+    raw_angles = a.ravel()
+    order = np.argsort(raw_angles)
+    sorted_angles = raw_angles[order]
+    pos = np.searchsorted(sorted_angles, bin_angle) % len(order)
+    left, right = order[(pos-1) % len(order)], order[pos]
+    dl = abs((bin_angle-raw_angles[left]+180.) % 360.-180.)
+    dr = abs((bin_angle-raw_angles[right]+180.) % 360.-180.)
+    nearest = np.where(dl <= dr, left, right)
+    raw_d, raw_q = data['d'].ravel()[nearest], data['q'].ravel()[nearest]
+    sampled = raw_d / 1000.
+    sampled = np.where((raw_d == 0) | (sampled > range_max), np.inf, sampled)
+    invalid = (raw_d > 0) & ((raw_q < min_q) | (raw_d/1000. < range_min))
+    sampled[invalid] = np.nan
     a, d, q = a[keep], d[keep], data['q'][keep]
     idx = np.minimum(((a + 180.0) / 360.0 * n).astype(int), n - 1)
     o = np.lexsort((d, idx))                       # по сектору, внутри — по расстоянию
     idx, d, q = idx[o], d[o], q[o]
     first = np.r_[True, idx[1:] != idx[:-1]] if len(idx) else np.zeros(0, bool)
     ranges = np.full(n, np.nan)
-    ranges[covered] = np.inf
+    ranges[covered] = sampled[covered]
     for shift in (-1, 0, 1):
         ranges[(unknown_idx+shift) % n] = np.nan
     intens = np.zeros(n)

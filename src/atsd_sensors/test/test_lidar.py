@@ -39,9 +39,9 @@ def test_matches_point_by_point_parsing():
         args = (list(starts), list(ends), payloads, 455, invert, 7.0, 0.05, 12.0, 20, crop)
         r_new, q_new, _ = bins_from_packets(*args)
         r_ref, q_ref = reference(*args)
-        fin = np.isfinite(r_new)
+        fin = np.isfinite(r_ref) & np.isfinite(r_new)
         if not crop:
-            assert np.array_equal(fin, np.isfinite(r_ref))
+            assert np.isfinite(r_new[np.isfinite(r_ref)]).all()
         assert np.allclose(r_new[fin], r_ref[fin]) and np.allclose(q_new[fin], q_ref[fin])
 
 
@@ -67,3 +67,23 @@ def test_low_quality_returns_do_not_authorize_free_space():
 def test_full_crop_never_becomes_free_inf():
     ranges, _, _ = bins_from_packets([0.], [20.], [bytes(36)], 360, crop=((-180.,180.),))
     assert np.isnan(ranges).all()
+
+
+def test_native_sampling_gaps_preserve_finite_wall_instead_of_infinity():
+    payload = b''.join(struct.pack('<HB', 1000, 80) for _ in range(POINTS))
+    starts = np.arange(0., 360., 12.)
+    r, _, _ = bins_from_packets(starts, starts+11., [payload]*len(starts), 455)
+    assert np.all(r == 1.)
+
+
+def test_missing_packet_is_still_unknown_with_native_spacing():
+    starts = np.arange(0., 360., 12.)[1:]
+    r, _, _ = bins_from_packets(starts, starts+11., [bytes(36)]*len(starts), 455, False)
+    angles = -180.+(np.arange(455)+.5)*360./455
+    assert np.isnan(r[(angles > 2.) & (angles < 10.)]).all()
+    assert np.isposinf(r[(angles > 20.) & (angles < 30.)]).all()
+
+
+def test_no_packets_is_entirely_unknown():
+    r, q, count = bins_from_packets([], [], [], 455)
+    assert np.isnan(r).all() and not q.any() and count == 0
