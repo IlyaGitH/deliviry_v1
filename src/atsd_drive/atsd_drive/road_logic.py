@@ -271,14 +271,44 @@ class PoseFilter:
                             np.array([[sigma ** 2]]), 9.0)
 
 
+def rounded_route(path, radius):
+    """Tangent circular fillets; keep endpoints and leave short corners intact."""
+    points = [np.asarray(p, dtype=float) for p in path]
+    if len(points) < 3:
+        return [tuple(p) for p in points]
+    out = [tuple(points[0])]
+    for a, b, c in zip(points, points[1:], points[2:]):
+        incoming, outgoing = b-a, c-b
+        la, lb = np.linalg.norm(incoming), np.linalg.norm(outgoing)
+        if min(la, lb) < 1e-6:
+            continue
+        u, v = incoming/la, outgoing/lb
+        angle = math.atan2(float(u[0]*v[1]-u[1]*v[0]), float(u@v))
+        if abs(angle) < .05 or abs(angle) > math.radians(150):
+            out.append(tuple(b)); continue
+        tangent = radius*math.tan(abs(angle)/2)
+        # Never shrink the radius below the robot's limit to fit a short edge.
+        if tangent > .45*min(la, lb):
+            out.append(tuple(b)); continue
+        start, end = b-u*tangent, b+v*tangent
+        sign = math.copysign(1., angle)
+        center = start + sign*radius*np.array([-u[1], u[0]])
+        start_angle = math.atan2(start[1]-center[1], start[0]-center[0])
+        for t in np.linspace(0., angle, max(3, math.ceil(abs(angle)*radius/.12)+1)):
+            out.append(tuple(center+radius*np.array([math.cos(start_angle+t), math.sin(start_angle+t)])))
+        out[-1] = tuple(end)
+    out.append(tuple(points[-1]))
+    return out
+
+
 @dataclass
 class FollowCfg:
     v_max: float = 0.8          # едем ровно с этой скоростью; меньше — только в крутом повороте и у точки
     w_max: float = 1.0
     w_smooth: float = 0.5       # сглаживание руля: доля нового значения за такт 0,1 с
     lane_look: float = 1.5      # точка прицеливания на полосе, м
-    route_look: float = 2.5     # точка прицеливания на маршруте, м
-    switch_m: float = 2.0       # узел пройден, если ближе
+    route_look: float = 0.65     # точка прицеливания на маршруте, м
+    switch_m: float = 0.12       # узел пройден, если ближе
     junction_m: float = 4.0     # у перекрёстка разметке не верим, рулим по маршруту
     arrive_m: float = 0.3       # до точки вдоль дороги, м
     lane_align_deg: float = 30.0
@@ -299,7 +329,7 @@ class Follower:
         self.w_prev = 0.0
 
     def start(self, path):
-        self.path, self.i, self.mode = [tuple(p) for p in path], 0, 'start'
+        self.path, self.i, self.mode = rounded_route(path, max(.8, self.cfg.turn_radius)), 0, 'start'
         self.w_prev = 0.0
 
     def segment(self):
@@ -385,6 +415,23 @@ class Follower:
         # скорость постоянная: дрожание оценки места не должно дёргать газ. Сбавляем, только если
         # поворот круче, чем позволяет w_max, и на последних метрах — чтобы встать на точку
         v = min(c.v_max, c.w_max / abs(k)) if k else c.v_max
+        # Brake before upcoming curvature, not after entering the turn.
+        t, length = self._project(p)
+        ahead = (1-t)*length
+        for j in range(self.i+1, len(self.path)-1):
+            if ahead > 2.5:
+                break
+            a = np.asarray(self.path[j])-np.asarray(self.path[j-1])
+            b = np.asarray(self.path[j+1])-np.asarray(self.path[j])
+            la, lb = np.linalg.norm(a), np.linalg.norm(b)
+            if min(la, lb) > 1e-6:
+                bend = abs(math.atan2(float(a[0]*b[1]-a[1]*b[0]), float(a@b)))
+                curve = 2*math.sin(bend/2)/min(la, lb)
+                if curve > .01:
+                    corner_speed = min(c.v_max, math.sqrt(.25/curve), c.w_max/curve)
+                    v = min(v, math.sqrt(corner_speed**2 + 2*.3*max(0., ahead-.2)))
+            ahead += lb
+        v = min(v, math.sqrt(.25/abs(k))) if abs(k) > .01 else v
         v = min(v, max(0.15, 0.4 * math.dist(p, self.path[-1])))
         w = max(-c.w_max, min(c.w_max, v * k))
         w = self.w_prev + c.w_smooth * (w - self.w_prev)
