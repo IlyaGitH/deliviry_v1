@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Wi-Fi робота: NetworkManager сам подключается к известным сетям,
-# а если устойчивого подключения нет WAIT_S секунд — поднимаем свою точку доступа.
+# Wi-Fi робота: по умолчанию постоянная точка доступа (AP_ONLY=1).
+# AP_ONLY=0 возвращает известные сети и AP после WAIT_S секунд без связи.
 # Устойчивое — держится STABLE_S подряд с сигналом от MIN_SIGNAL %: на краю зоны сеть
 # то ловится, то пропадает, и без этого точка не поднималась бы никогда.
 set -u
@@ -15,6 +15,7 @@ AP_CHANNEL=0   # 0 — выбор NetworkManager; иначе фиксирова�
 WAIT_S=60
 STABLE_S=30     # связь считается, только если продержалась столько подряд
 MIN_SIGNAL=25   # % сигнала известной сети; слабее — как будто её нет
+AP_ONLY=1       # постоянная раздача; 0 возвращает поиск известных сетей
 AP_RETRY_ENABLED=0  # сохранять AP; поиск известных сетей с отключением AP — только явно
 RETRY_S=180     # в режиме точки, если к ней никто не подключён, — раз в столько ищем известные сети
 POLL_S=5
@@ -67,6 +68,23 @@ start_ap() {
   nmcli con up "${AP}" >/dev/null
 }
 
+ap_only_loop() {
+  echo "Постоянная точка доступа «${AP_SSID}»: поиск известных сетей отключён"
+  # Disable automatic station reconnections even when AP activation fails.
+  nmcli dev set "${IFACE}" autoconnect no || return 1
+  while true; do
+    if [[ $(dev_state) != 100* || $(dev_conn) != "${AP}" ]]; then
+      nmcli dev disconnect "${IFACE}" >/dev/null 2>&1
+      if start_ap; then
+        echo "Точка доступа поднята: http://${AP_ADDR%/*}:8080"
+      else
+        echo "Не удалось поднять точку доступа; повтор через ${POLL_S} с"
+      fi
+    fi
+    sleep "${POLL_S}"
+  done
+}
+
 main() {
   # NetworkManager и wlan0 могут появиться после запуска сервиса.
   until nmcli -g GENERAL.STATE dev show "${IFACE}" >/dev/null 2>&1; do
@@ -74,7 +92,15 @@ main() {
     sleep "${POLL_S}"
   done
   nmcli dev set "${IFACE}" managed yes || exit 1
+  if (( AP_ONLY )); then
+    nmcli dev set "${IFACE}" autoconnect no || exit 1
+  fi
   nmcli radio wifi on || exit 1
+  if (( AP_ONLY )); then
+    ap_only_loop
+    return $?
+  fi
+  nmcli dev set "${IFACE}" autoconnect yes || exit 1
   echo "Ищу известные сети на ${IFACE}, своя точка «${AP_SSID}» через ${WAIT_S} с без связи"
   since=$(date +%s)
   ok_since=0

@@ -17,7 +17,7 @@ TimeoutStopSec=15
 KillSignal=SIGINT
 SupplementaryGroups=dialout video i2c bluetooth
 RestartSec=5
-ExecStart=/opt/atsd/run.sh ros2 launch atsd_bringup sensors.launch.py
+ExecStart=/opt/atsd/run.sh ros2 launch atsd_bringup sensors.launch.py use_wifi_locator:=false
 
 [Install]
 WantedBy=atsd.target

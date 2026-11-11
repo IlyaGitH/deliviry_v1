@@ -20,7 +20,7 @@ def test_failed_station_query_does_not_mean_no_clients():
 
 def test_late_interface_and_unstable_connection_eventually_start_ap():
     out = run('''
-      t=1; WAIT_S=3; STABLE_S=30; POLL_S=1
+      AP_ONLY=0; t=1; WAIT_S=3; STABLE_S=30; POLL_S=1
       date() { echo "$t"; }
       sleep() { t=$((t+1)); if ((t>10)); then exit 0; fi; }
       nmcli() { if [[ "$*" == '-g GENERAL.STATE dev show wlan0' ]] && ((t<3)); then return 1; fi; return 0; }
@@ -54,7 +54,7 @@ def test_unknown_signal_is_not_a_stable_station():
 
 def test_stable_known_network_keeps_connection():
     out = run('''
-      t=1; WAIT_S=6; STABLE_S=2
+      AP_ONLY=0; t=1; WAIT_S=6; STABLE_S=2
       date() { echo "$t"; }
       sleep() { t=$((t+1)); if ((t>12)); then exit 0; fi; }
       nmcli() { return 0; }
@@ -113,3 +113,27 @@ def test_ap_fixed_channel_is_preserved():
       echo SUCCESS
     ''')
     assert 'SUCCESS' in out
+
+
+def test_ap_only_overrides_known_network_and_retries_without_scanning():
+    out = run('''
+      t=0; attempts=0; state=100; connection=home; AP_RETRY_ENABLED=1
+      nmcli() {
+        case "$*" in
+          *'autoconnect yes'*|*'wifi list'*|*'con down'*) echo FORBIDDEN >&2; exit 9;;
+        esac
+        return 0
+      }
+      dev_state() { echo "$state"; }
+      dev_conn() { echo "$connection"; }
+      signal() { echo SCANNED >&2; exit 9; }
+      start_ap() {
+        attempts=$((attempts+1))
+        if ((attempts==1)); then state=30; connection=''; return 1; fi
+        state=100; connection=atsd-hotspot
+      }
+      sleep() { t=$((t+1)); if ((t==4)); then echo "ATTEMPTS=$attempts"; exit 0; fi; }
+      main
+    ''')
+    assert 'ATTEMPTS=2' in out
+    assert 'Постоянная точка' in out

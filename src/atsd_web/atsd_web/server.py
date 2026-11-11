@@ -103,7 +103,7 @@ def yandex_map(layer):
     meta_file = DATA_DIR / f'yandex_{layer}.json'
     want = [origin[0], origin[1], MAP_ZOOM]
     if _load(meta_file, None) != want or not img.exists():
-        if layer not in _map_busy and time.time() - _map_fail.get(layer, 0) > 60:
+        if os.environ.get('ATSD_MAP_DOWNLOADS', '0') == '1' and layer not in _map_busy and time.time() - _map_fail.get(layer, 0) > 60:
             _map_busy.add(layer)
             threading.Thread(target=_fetch_map, args=(layer, want, img, meta_file), daemon=True).start()
         return None
@@ -626,7 +626,8 @@ def main(args=None):
         _save(POINTS_FILE, DEFAULT_POINTS)  # nav_node берёт координаты точек отсюда
     link = RosLink(mock=mock, logger=print)
     link.start()
-    threading.Timer(10.0, lambda: [yandex_map(k) for k in MAP_LAYERS]).start()  # подложка заранее, в фоне
+    if os.environ.get('ATSD_MAP_DOWNLOADS', '0') == '1':
+        threading.Timer(10.0, lambda: [yandex_map(k) for k in MAP_LAYERS]).start()  # подложка заранее, в фоне
     print(f'АТСД-1М · веб-интерфейс на порту {port}{" · режим имитации" if mock else ""}')
     if debug_port:
         # отдельный сервер в своём потоке: сигналы остановки ловит основной, этот уходит вместе с процессом

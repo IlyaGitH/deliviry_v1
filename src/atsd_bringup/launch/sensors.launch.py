@@ -21,7 +21,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_camera', default_value='false'),
         DeclareLaunchArgument('use_gnss',   default_value='true'),
         DeclareLaunchArgument('use_ble',    default_value='true'),
-        DeclareLaunchArgument('use_wifi_locator', default_value='true'),
+        DeclareLaunchArgument('use_wifi_locator', default_value='false'),
         DeclareLaunchArgument('use_imu', default_value='true'),
 
         Node(package='atsd_sensors', executable='lidar_node',

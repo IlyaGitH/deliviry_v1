@@ -220,12 +220,13 @@ fi
 if [[ ! -f /etc/atsd/wifi.conf ]]; then
   AP_PASS_NEW="$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 10 || true)"
   cat > /etc/atsd/wifi.conf <<WIFICONF
-# Своя точка доступа, если известной сети нет WAIT_S секунд
+# Постоянная точка доступа; AP_ONLY=0 возвращает поиск известных сетей
 AP_SSID=ATSD-1M
 AP_PASS=${AP_PASS_NEW}
 AP_ADDR=10.42.0.1/24
 AP_BAND=bg
 AP_CHANNEL=0
+AP_ONLY=1
 AP_RETRY_ENABLED=0
 WAIT_S=60
 IFACE=wlan0

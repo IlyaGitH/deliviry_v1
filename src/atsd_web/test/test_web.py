@@ -128,3 +128,18 @@ def test_latest_manual_pose_is_delivered_once_when_nav_appears(web):
     assert link._pending_pose is None
     link._flush_pose()
     assert link._pub_pose.publish.call_count == 1
+
+
+def test_offline_yandex_does_not_start_download_and_serves_cached_map(monkeypatch, tmp_path):
+    monkeypatch.delenv('ATSD_MAP_DOWNLOADS', raising=False)
+    monkeypatch.setattr(server, 'DATA_DIR', tmp_path)
+    monkeypatch.setattr(server, 'map_origin', lambda: (55.,37.))
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Offline mode attempted background download')
+    monkeypatch.setattr(server.threading, 'Thread', forbidden)
+    layer = next(iter(server.MAP_LAYERS))
+    assert server.yandex_map(layer) is None
+    _, ext, _ = server.MAP_LAYERS[layer]
+    (tmp_path / f'yandex_{layer}.{ext}').write_bytes(b'cached image')
+    server._save(tmp_path / f'yandex_{layer}.json', [55.,37.,server.MAP_ZOOM])
+    assert server.yandex_map(layer)['image'].startswith('/api/map/')
