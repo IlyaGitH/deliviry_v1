@@ -33,6 +33,9 @@ nav_node:
     arrive_m: 0.3              # расстояние до фактической точки, м
     lane_timeout_s: 0.5
     gnss_timeout_s: 2.0
+    gnss_acquire_s: 5.0       # непрерывная проверка перед автоматическим переходом на GPS
+    gnss_max_sigma_m: 5.0     # максимальная заявленная горизонтальная ошибка
+    gnss_max_offset_m: 30.0   # больший скачок от текущей оценки не принимать
     turn_radius_m: 0.5         # дуга вместо разворота на асфальте
     turn_speed_m_s: 0.25
     no_position_timeout_s: 20.0

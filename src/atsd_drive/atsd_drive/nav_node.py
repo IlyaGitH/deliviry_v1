@@ -16,6 +16,7 @@ from sensor_msgs.msg import Imu, LaserScan, NavSatFix, NavSatStatus
 from std_msgs.msg import Float32, String
 from tf2_ros import TransformBroadcaster
 
+from atsd_drive.gps_gate import GpsGate
 from atsd_drive.nav_logic import find_point, want_leg
 from atsd_drive.local_planner import LocalCfg, LocalPlanner, ScanSpace, Decision, relative_pose
 from atsd_drive.road_logic import FollowCfg, RoadNav, Roads, to_local, wrap
@@ -62,12 +63,18 @@ class NavNode(Node):
         d('laser_frame', 'laser_frame')
         d('lane_timeout_s', 0.5)
         d('gnss_timeout_s', 2.0)
+        d('gnss_acquire_s', 5.0)
+        d('gnss_max_sigma_m', 5.0)
+        d('gnss_max_offset_m', 30.0)
         d('no_position_timeout_s', 20.0)
         p = lambda n: self.get_parameter(n).value
         self.points_file, self.roads_file = p('points_file'), p('roads_file')
         self.map_frame, self.odom_frame = p('map_frame'), p('odom_frame')
         self.lane_timeout, self.gnss_timeout = float(p('lane_timeout_s')), float(p('gnss_timeout_s'))
         self.no_pos_timeout = float(p('no_position_timeout_s'))
+        self.gps_gate = GpsGate(float(p('gnss_acquire_s')), float(p('gnss_max_sigma_m')),
+                                float(p('gnss_max_offset_m')), self.gnss_timeout)
+        self.gps_stamp = None
 
         self.roads_mtime, self.origin = None, None
         self.nav = RoadNav(Roads(), FollowCfg(v_max=float(p('v_max')), arrive_m=float(p('arrive_m')),
@@ -202,20 +209,49 @@ class NavNode(Node):
         self.avoidance = Decision()
 
     def on_fix(self, msg: NavSatFix):
-        if msg.status.status < NavSatStatus.STATUS_FIX or self.origin is None:
+        now = time.monotonic()
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
+        age = self.get_clock().now().nanoseconds*1e-9-stamp
+        reason = None
+        if self.origin is None:
+            reason = 'no_origin'
+        elif msg.status.status < NavSatStatus.STATUS_FIX:
+            reason = 'no_fix'
+        elif not math.isfinite(age) or not 0 <= age <= self.gnss_timeout:
+            reason = 'stale'
+        elif self.gps_stamp is not None and stamp <= self.gps_stamp:
+            return  # replayed/duplicate fixes cannot qualify a signal
+        elif (not math.isfinite(msg.latitude) or not math.isfinite(msg.longitude) or
+              not -90 <= msg.latitude <= 90 or not -180 <= msg.longitude <= 180):
+            reason = 'poor_quality'
+        if reason is not None:
+            self.gps_gate.reset(reason)
+            self.nav.filter.gnss_lost()
             return
+        self.gps_stamp = stamp
+        variances = (msg.position_covariance[0], msg.position_covariance[4])
+        if msg.position_covariance_type == 0 or not all(math.isfinite(v) and v > 0 for v in variances):
+            self.gps_gate.reset('poor_quality')
+            self.nav.filter.gnss_lost()
+            return
+        sigma = max(1., math.sqrt(max(variances)))
         x, y = to_local(msg.latitude, msg.longitude, self.origin)
-        sigma = math.sqrt(msg.position_covariance[0]) if msg.position_covariance[0] > 0 else 2.5
-        before = self.nav.filter.gnss
-        wifi = self.wifi_fresh()
-        state = self.nav.filter.gnss_fix(x, y, max(sigma, 1.0), wifi)
-        self.fix_t = time.monotonic()
         self.fix_xy, self.fix_sigma = (round(x, 2), round(y, 2)), round(sigma, 1)
-        if state != before and state == 'suspect':
-            self.event('GNSS_SUSPECT')
-            self.get_logger().warn('GPS прыгнул или не сходится с колёсами — не верю ему, еду по колёсам и разметке')
-        elif state != before and state == 'ok' and before == 'suspect':
+        wifi = self.wifi_fresh()
+        if wifi is not None and math.dist((x,y), wifi[:2]) > max(100.,3*wifi[2]):
+            self.gps_gate.reset('jump')
+            self.nav.filter.gnss_lost()
+            return
+        f = self.nav.filter
+        if not self.gps_gate.push(x,y,sigma,now,self.odom, f.X if f.ready else None):
+            f.gnss_lost()
+            return
+        before = f.gnss
+        f.qualified_gps(x,y,sigma)
+        self.fix_t = now
+        if before != 'ok':
             self.event('GNSS_OK')
+            self.get_logger().info('GPS проверен: автоматически корректирую положение по спутникам')
 
     def on_wifi(self, msg: NavSatFix):
         if self.origin is None:
@@ -229,7 +265,19 @@ class NavNode(Node):
                                    'точнее даст GPS или «Робот здесь»')
 
     def on_vel(self, msg: TwistWithCovarianceStamped):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec*1e-9
+        age = self.get_clock().now().nanoseconds*1e-9-stamp
+        if (self.gps_gate.reason != 'ok' or time.monotonic()-self.fix_t > self.gnss_timeout
+                or not 0 <= age <= self.gnss_timeout):
+            return
         ve, vn = msg.twist.twist.linear.x, msg.twist.twist.linear.y
+        if not all(math.isfinite(v) for v in (ve,vn)) or math.hypot(ve,vn) > 2.:
+            return
+        if (abs(self.v_odom) < .15 or
+                abs(math.hypot(ve,vn)-abs(self.v_odom)) > max(.3,.5*abs(self.v_odom))):
+            return  # stationary GPS drift is not a heading measurement
+        if self.v_odom < -.05:
+            ve, vn = -ve, -vn  # reverse course is opposite the robot heading
         w = self.imu_rate if self.imu_fresh() else self.w_odom
         self.nav.course(math.atan2(vn, ve), math.hypot(ve, vn), abs(w) > 0.2)
 
@@ -243,6 +291,7 @@ class NavNode(Node):
     def on_initialpose(self, msg: PoseWithCovarianceStamped):
         pos = msg.pose.pose.position
         self.publish_command()
+        self.gps_gate.reset()
         self.nav.filter.set_manual(pos.x, pos.y, yaw_of(msg.pose.pose.orientation))
         self.reset_local()
         self.space, self.scan_pose = None, None
@@ -298,6 +347,8 @@ class NavNode(Node):
         now = time.monotonic()
         if now - self.fix_t > self.gnss_timeout:
             self.nav.filter.gnss_lost()
+            if self.gps_gate.last_t is not None and now-self.gps_gate.last_t > self.gnss_timeout:
+                self.gps_gate.reset('stale')
         self.publish_tf()
         if not self.leg:
             return
@@ -416,6 +467,7 @@ class NavNode(Node):
         f = self.nav.filter
         lane_on = time.monotonic() - self.lane_t < self.lane_timeout
         self.pub_status.publish(String(data=json.dumps({
+            'gps_check': self.gps_gate.reason,
             'gnss': f.gnss, 'mode': self.nav.follower.mode if self.nav.active else 'idle',
             'avoidance': self.avoidance.state, 'reverse_m': round(self.local.reverse_distance, 2),
             'lane': self.lane['lines'] if lane_on and self.lane else 0,

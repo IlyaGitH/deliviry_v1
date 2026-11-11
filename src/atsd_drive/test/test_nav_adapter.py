@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import numpy as np
 import pytest
 
+from atsd_drive.gps_gate import GpsGate
 from atsd_drive.local_planner import Decision, LocalPlanner, ScanSpace
 from atsd_drive.road_logic import RoadNav, Roads
 
@@ -28,6 +29,7 @@ def adapter(monkeypatch):
         mod=types.ModuleType(name);mod.__dict__.update(attrs);monkeypatch.setitem(sys.modules,name,mod)
     spec=importlib.util.spec_from_file_location('tested_nav',Path(__file__).resolve().parents[1]/'atsd_drive/nav_node.py')
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    module.NavSatStatus.STATUS_FIX = 0
     clock=[10.]
     monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
     node=module.NavNode.__new__(module.NavNode)
@@ -38,6 +40,8 @@ def adapter(monkeypatch):
     node.laser=(.29,0.,0.);node.laser_frame='laser_frame'
     node.get_clock=lambda:NS(now=lambda:NS(nanoseconds=int(clock[0]*1e9)))
     node.leg=('TO_DROP','goal');node.leg_t=0.;node.result=None
+    node.gps_gate=GpsGate();node.gps_stamp=None;node.origin=(55.,37.)
+    node.wifi_fresh=lambda:None
     node.fix_t=node.lane_t=0.;node.gnss_timeout=2.;node.lane_timeout=.5;node.lane=None
     node.last_plan_pub=10.;node.no_pos_timeout=20.
     node.publish_tf=Mock();node.publish_command=Mock();node.pub_remain=Mock();node.publish_plan=Mock()
@@ -153,3 +157,60 @@ def test_reverse_preference_uses_final_distance_not_lookahead(adapter):
     node.local.decide = Mock(return_value=Decision(.25,0.,'following'))
     node.tick()
     assert not node.local.decide.call_args.kwargs['short_reverse_allowed']
+
+
+def gps_fix(node, clock, x=10., quality=0, sigma=1.):
+    from atsd_drive.road_logic import to_geo
+    lat, lon = to_geo(x,0.,node.origin)
+    stamp=clock[0]; sec=int(stamp)
+    cov=[0.]*9;cov[0]=cov[4]=sigma*sigma
+    return NS(header=NS(stamp=NS(sec=sec,nanosec=int((stamp-sec)*1e9))),
+              status=NS(status=quality),latitude=lat,longitude=lon,
+              position_covariance=cov,position_covariance_type=1)
+
+
+def test_gps_automatically_takes_over_manual_only_after_qualification(adapter):
+    _,node,clock=adapter
+    for t in range(10,15):
+        clock[0]=float(t);node.on_fix(gps_fix(node,clock))
+        assert node.nav.filter.manual
+        assert node.nav.filter.X[0] == 0.
+    clock[0]=15.;node.on_fix(gps_fix(node,clock))
+    assert not node.nav.filter.manual and node.nav.filter.gnss=='ok'
+    assert 0 < node.nav.filter.X[0] <= .25
+    assert node.gps_gate.reason=='ok'
+    clock[0]=16.;node.on_fix(gps_fix(node,clock,quality=-1))
+    assert node.nav.filter.gnss=='none'
+
+
+def test_gps_stale_unknown_accuracy_and_duplicate_cannot_take_over(adapter):
+    _,node,clock=adapter
+    msg=gps_fix(node,clock)
+    node.on_fix(msg)
+    for t in range(11,17):
+        clock[0]=float(t);node.on_fix(msg)
+    assert node.nav.filter.manual
+    msg=gps_fix(node,clock);msg.position_covariance_type=0
+    node.on_fix(msg)
+    assert node.gps_gate.reason=='poor_quality' and node.nav.filter.manual
+
+
+def test_gps_course_is_fresh_and_reversed_when_backing(adapter):
+    _,node,clock=adapter
+    node.nav.course=Mock();node.imu_fresh=lambda:False
+    msg=NS(header=NS(stamp=NS(sec=10,nanosec=0)),
+           twist=NS(twist=NS(linear=NS(x=.5,y=0.))))
+    node.on_vel(msg);node.nav.course.assert_not_called()
+    node.gps_gate.reason='ok';node.fix_t=10.;node.v_odom=-.5
+    node.on_vel(msg)
+    assert abs(node.nav.course.call_args.args[0]) == np.pi
+
+
+def test_stationary_gps_drift_cannot_change_heading(adapter):
+    _,node,_=adapter
+    node.nav.course=Mock();node.imu_fresh=lambda:False
+    node.gps_gate.reason='ok';node.fix_t=10.;node.v_odom=0.
+    msg=NS(header=NS(stamp=NS(sec=10,nanosec=0)),
+           twist=NS(twist=NS(linear=NS(x=.6,y=0.))))
+    node.on_vel(msg)
+    node.nav.course.assert_not_called()

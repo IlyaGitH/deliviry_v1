@@ -173,7 +173,7 @@ class PoseFilter:
         self.P = F @ self.P @ F.T + Q
         self.odo_since_fix += (ds * c, ds * s)
 
-    def _update(self, z, h, H, R, gate=None):
+    def _update(self, z, h, H, R, gate=None, max_step=None):
         nu = z - h
         if H.shape[0] == 1 and H[0, 2]:
             nu = np.array([wrap(nu[0])])
@@ -182,9 +182,14 @@ class PoseFilter:
         if gate is not None and d2 > gate:
             return False
         K = self.P @ H.T @ np.linalg.inv(S)
+        if max_step is not None:
+            size = np.linalg.norm((K @ nu)[:2])
+            if size > max_step:
+                K *= max_step/size
         self.X = self.X + K @ nu
         self.X[2] = wrap(self.X[2])
-        self.P = (np.eye(3) - K @ H) @ self.P
+        residual = np.eye(3) - K @ H
+        self.P = residual @ self.P @ residual.T + K @ R @ K.T
         return True
 
     def gnss_fix(self, x, y, sigma, wifi=None):
@@ -228,6 +233,25 @@ class PoseFilter:
             if self.rejects >= 3:
                 self.gnss, self.consistent = 'suspect', 0
         return self.gnss
+
+    def qualified_gps(self, x, y, sigma):
+        """Only after GpsGate: automatic manual-to-GPS handover, bounded correction."""
+        if not all(math.isfinite(v) for v in (x,y,sigma)) or sigma <= 0:
+            return False
+        if not self.ready:
+            self.reset(x, y, None, sig_xy=sigma)
+        else:
+            # A hand-set covariance must not permanently suppress recovered GPS.
+            for axis in (0, 1):
+                self.P[axis, axis] = max(self.P[axis, axis], 1.)
+            H = np.array([[1.,0.,0.],[0.,1.,0.]])
+            self._update(np.array([x,y]), self.X[:2], H, np.eye(2)*sigma**2, max_step=.25)
+        self.manual = False
+        self.gnss = 'ok'
+        self.last_fix = np.array([x,y])
+        self.odo_since_fix = np.zeros(2)
+        self.rejects = self.consistent = 0
+        return True
 
     def wifi_fix(self, x, y, sigma):
         """Место по Wi-Fi (±десятки метров). Без GPS и «Робот здесь» — старт отсюда; в пути поправляет,

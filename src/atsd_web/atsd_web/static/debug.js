@@ -102,6 +102,10 @@ function chips(t) {
   const g = { manual: ['Позиция задана вручную', 'ok'], ok: ['GPS ок', 'ok'], suspect: ['GPS не верю (глушение?)', 'bad'], lost: ['GPS нет', 'warn'] }[r.gnss]
     || ['GPS ' + (r.gnss || '?'), 'warn'];
   const out = [chip(g[0], g[1])];
+  const gpsCheck = { acquiring: 'GPS: проверка устойчивости', poor_quality: 'GPS: низкая точность',
+    jump: 'GPS: скачок отклонён', stale: 'GPS: данные устарели', no_fix: 'GPS: нет фикса',
+    no_origin: 'GPS: нет географической привязки карты' }[r.gps_check];
+  if (gpsCheck) out.push(chip(gpsCheck, 'warn'));
   if (t.gnss_status) out.push(chip(t.gnss_status));
   const lane = (t.lane || '').split(' ');
   if (lane.length >= 4 && lane[0] !== 'none') {
