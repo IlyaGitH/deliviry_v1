@@ -250,3 +250,13 @@ lidar_node:
     check_crc: true
     crop_deg: [0.0, 0.0]
     publish_every: 2         # каждый 2-й оборот: 5 сканов в секунду вместо 10
+
+# Диагностика движения и пробуксовки; не корректирует навигацию и не командует моторами.
+lidar_odom_node:
+  ros__parameters:
+    laser_x: 0.29
+    laser_y: 0.0
+    laser_yaw_deg: 0.0
+    laser_frame: laser_frame
+    budget_s: 0.08
+    scan_timeout_s: 0.45

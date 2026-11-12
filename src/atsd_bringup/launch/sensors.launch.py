@@ -10,6 +10,7 @@ def generate_launch_description():
     cfg = os.path.join(get_package_share_directory('atsd_bringup'), 'config', 'atsd.yaml')
 
     use_lidar  = LaunchConfiguration('use_lidar')
+    use_lidar_odom = LaunchConfiguration('use_lidar_odometry')
     use_camera = LaunchConfiguration('use_camera')
     use_gnss   = LaunchConfiguration('use_gnss')
     use_ble    = LaunchConfiguration('use_ble')
@@ -18,6 +19,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument('use_lidar',  default_value='true'),
+        DeclareLaunchArgument('use_lidar_odometry', default_value=use_lidar),
         DeclareLaunchArgument('use_camera', default_value='false'),
         DeclareLaunchArgument('use_gnss',   default_value='true'),
         DeclareLaunchArgument('use_ble',    default_value='true'),
@@ -28,6 +30,12 @@ def generate_launch_description():
              name='lidar_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=3.0,
              condition=IfCondition(use_lidar)),
+
+        Node(package='atsd_sensors', executable='lidar_odom_node',
+             name='lidar_odom_node', parameters=[cfg],
+             output='screen', respawn=True, respawn_delay=3.0, prefix='nice -n 10',
+             additional_env={'OPENBLAS_NUM_THREADS': '1', 'OMP_NUM_THREADS': '1'},
+             condition=IfCondition(use_lidar_odom)),
 
         Node(package='v4l2_camera', executable='v4l2_camera_node',
              name='v4l2_camera', parameters=[cfg],

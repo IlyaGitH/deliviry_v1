@@ -113,6 +113,17 @@ function chips(t) {
   } else out.push(chip('разметки не вижу', 'warn'));
   if (t.imu_status) out.push(chip(t.imu_status.replace(/^imu /, 'гироскоп '), /ошибка|калибруется/.test(t.imu_status) ? 'warn' : 'ok'));
   else out.push(chip('гироскопа нет', 'warn'));
+  const lo = t.lidar_odom || {};
+  if (lo.reason) {
+    const reasons = { initializing: 'сбор сканов', scan_gap: 'пропуск скана', stale_scan: 'нет свежих сканов',
+      few_returns: 'мало отражений', degenerate: 'движение неразличимо', low_overlap: 'мало совпадений',
+      budget: 'долгий расчёт', not_converged: 'нет сходимости', residual: 'низкое качество',
+      large_step: 'скачок', implausible_motion: 'неправдоподобное движение',
+      stale_after_matching: 'результат устарел', stale_or_wrong_frame: 'скан устарел или неверная система координат' };
+    out.push(chip('Лидарная одометрия: ' + (lo.valid ? 'измерение принято (наблюдение)' : (reasons[lo.reason] || 'нет измерения')), lo.valid ? 'ok' : 'warn'));
+    if (lo.valid && lo.slip_suspected) out.push(chip('Подозрение на пробуксовку', 'warn'));
+    if (lo.valid && !lo.wheel_comparison) out.push(chip('Нет синхронной одометрии колёс', 'warn'));
+  }
   out.push(chip('режим ' + (r.mode || '—')));
   if (r.mode !== 'idle' && r.avoidance) {
     const states = { following: 'путь свободен', avoid: 'объезд по лидару', gear_stop: 'остановка перед сменой направления',

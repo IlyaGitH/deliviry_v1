@@ -143,3 +143,16 @@ def test_offline_yandex_does_not_start_download_and_serves_cached_map(monkeypatc
     (tmp_path / f'yandex_{layer}.{ext}').write_bytes(b'cached image')
     server._save(tmp_path / f'yandex_{layer}.json', [55.,37.,server.MAP_ZOOM])
     assert server.yandex_map(layer)['image'].startswith('/api/map/')
+
+
+def test_lidar_odometry_diagnostic_does_not_remain_valid_after_publisher_loss(monkeypatch):
+    import types
+    from atsd_web import ros_link
+    link=RosLink(mock=True)
+    clock=[10.]
+    monkeypatch.setattr(ros_link.time,'monotonic',lambda:clock[0])
+    link._on_lidar_odom(types.SimpleNamespace(data='{"valid":true,"reason":"ok","slip_suspected":true}'))
+    assert link.snapshot()['lidar_odom']['valid']
+    clock[0]=12.
+    result=link.snapshot()['lidar_odom']
+    assert not result['valid'] and not result['slip_suspected'] and '_received' not in result

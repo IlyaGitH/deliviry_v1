@@ -23,6 +23,7 @@ DEFAULT = {
     'gnss': {'fix': False, 'lat': None, 'lon': None},
     'wifi_geo': None,  # (широта, долгота, точность м) по Wi-Fi
     'imu_status': '',
+    'lidar_odom': {},
     'estop': False,
     'mission': None,
     'obstacle': '',
@@ -99,7 +100,22 @@ class RosLink:
         with self._lock:
             snap = copy.deepcopy(self._state)
             snap['events'] = list(self._events)[-25:]
+        lidar = snap.get('lidar_odom', {})
+        if lidar:
+            age = time.monotonic()-lidar.pop('_received', 0.)
+            lidar['age_s'] = round(age, 2)
+            if age > 1.:
+                lidar.update(valid=False, reason='stale_scan', slip_suspected=False)
         return snap
+
+    def _on_lidar_odom(self, message):
+        try:
+            value = json.loads(message.data)
+            if isinstance(value, dict):
+                value['_received'] = time.monotonic()
+                self._set(['lidar_odom'], value)
+        except (ValueError, TypeError):
+            pass
 
     def _set(self, path, value):
         with self._lock:
@@ -235,6 +251,7 @@ class RosLink:
         sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
         sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
         sub(String, '/wifi/status', lambda m: self._log(m.data, 'wifi'), 5)
+        sub(String, '/lidar_odom/status', self._on_lidar_odom, 5)
         sub(String, '/imu/status', lambda m: self._set(['imu_status'], m.data), 5)
         sub(NavSatFix, '/wifi/fix', lambda m: self._set(
             ['wifi_geo'], (m.latitude, m.longitude, m.position_covariance[0] ** 0.5)), 5)

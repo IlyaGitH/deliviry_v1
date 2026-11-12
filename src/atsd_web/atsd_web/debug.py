@@ -72,6 +72,7 @@ async def ws(sock: WebSocket):
                 'pose': t['pose'], 'speed': t['speed'], 'road': t['road'], 'plan': t['plan'],
                 'gnss': t['gnss'], 'gnss_status': t['gnss_status'], 'lane': t['lane'],
                 'imu_status': t.get('imu_status', ''),
+                'lidar_odom': t.get('lidar_odom', {}),
                 'obstacle': t['obstacle'], 'state': m.get('state'), 'pause': m.get('pause', []),
                 'frame_age': round(age, 1) if jpg is not None else None,
                 'lines': lines,
