@@ -10,7 +10,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
-from atsd_perception.lane_logic import BirdView, LaneCfg, detect_lane
+from atsd_perception.lane_logic import BirdView, LaneCfg, LaneTracker, detect_lane
 from atsd_perception.vision_logic import (CameraGeom, Confirm, LightHsv, SpotCfg, classify_light,
                                          distance_from_height, find_red_spot, ground_to_pixel)
 
@@ -57,8 +57,8 @@ class VisionNode(Node):
         d('spot_enabled', True)
         d('camera_x', 0.28)
         d('camera_y', 0.0)
-        d('camera_z', 0.385)
-        d('camera_pitch_deg', 10.0)
+        d('camera_z', 0.30)
+        d('camera_pitch_deg', 0.0)
         d('spot_s_min', 110)
         d('spot_v_min', 60)
         d('spot_min_area_m2', 0.02)
@@ -112,6 +112,7 @@ class VisionNode(Node):
         self.pub_lane = self.create_publisher(String, 'perception/lane', 10)
         self.bird = None
         self.last_lane = None
+        self.lane_tracker = LaneTracker()
         self.lane_dbg = {}
         if bool(p('lane_enabled')) and CV_OK:
             self.bird = BirdView(self.cam, LaneCfg(
@@ -211,6 +212,10 @@ class VisionNode(Node):
         if self.bird is not None:
             self.lane_dbg = {}
             lane = detect_lane(frame, self.bird, debug=self.lane_dbg)
+            candidate = lane
+            lane = self.lane_tracker.update(lane, time.monotonic())
+            if candidate is not None and lane is None:
+                self.lane_dbg['reason'] = 'confirming marking'
             self.last_lane = lane
             self.pub_lane.publish(String(data=(
                 f'{lane["offset"]:.3f} {lane["angle"]:.4f} {lane["width"]:.2f} {lane["lines"]}'
@@ -299,8 +304,10 @@ class VisionNode(Node):
             self.ground_line(img, ln['offset'], np.tan(ln['angle']), (0, 220, 120), 3)
             text = f'lane {ln["lines"]}  off {ln["offset"]:+.2f} m  ang {np.degrees(ln["angle"]):+.1f} deg  w {ln["width"]:.1f} m'
         else:
+            for a, b in self.lane_dbg.get('candidates', []):
+                self.ground_line(img, a, b, (0, 140, 255), 1)
             clutter = self.lane_dbg.get('clutter', 0.0)
-            text = f'lane: none  (clutter {clutter:.0%})' if clutter > self.bird.cfg.clutter_max else 'lane: none'
+            text = f'lane: none  (clutter {clutter:.0%})' if clutter > self.bird.cfg.clutter_max else 'lane: ' + self.lane_dbg.get('reason', 'none')
         # для калибровки наклона: горизонт по настройке должен лечь туда, где сходятся прямые пола
         # (коридор, края дороги); метки 1, 2, 4 м — совпасть с рулеткой на полу
         h, w = img.shape[:2]

@@ -214,3 +214,11 @@ def test_stationary_gps_drift_cannot_change_heading(adapter):
            twist=NS(twist=NS(linear=NS(x=.6,y=0.))))
     node.on_vel(msg)
     node.nav.course.assert_not_called()
+
+
+def test_explicit_lane_loss_clears_previous_observation(adapter):
+    _,node,_=adapter
+    node.on_lane(NS(data='0.1 0.05 3.5 2'))
+    assert node.lane is not None
+    node.on_lane(NS(data='none'))
+    assert node.lane is None and node.lane_t == 0.

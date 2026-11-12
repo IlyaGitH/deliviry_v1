@@ -66,7 +66,7 @@ def generate_launch_description():
                         'base_link', 'laser_frame']),
         Node(package='tf2_ros', executable='static_transform_publisher',
              name='tf_base_camera',
-             arguments=['0.28', '0.0', '0.385', '0', '0.17', '0',
+             arguments=['0.28', '0.0', '0.30', '0', '0', '0',
                         'base_link', 'camera_link']),
         Node(package='tf2_ros', executable='static_transform_publisher',
              name='tf_base_gnss',

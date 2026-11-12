@@ -287,6 +287,8 @@ class NavNode(Node):
             self.lane = {'offset': float(parts[0]), 'angle': float(parts[1]),
                          'width': float(parts[2]), 'lines': int(parts[3])}
             self.lane_t = time.monotonic()
+        else:
+            self.lane, self.lane_t = None, 0.
 
     def on_initialpose(self, msg: PoseWithCovarianceStamped):
         pos = msg.pose.pose.position

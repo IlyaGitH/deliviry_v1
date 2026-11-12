@@ -74,8 +74,8 @@ class CameraGeom:
     cy: float = 240.0
     x: float = 0.28
     y: float = 0.0
-    z: float = 0.385
-    pitch_rad: float = 0.17
+    z: float = 0.30
+    pitch_rad: float = 0.0
 
 
 @dataclass

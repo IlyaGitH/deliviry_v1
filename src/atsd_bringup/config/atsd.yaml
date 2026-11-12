@@ -150,15 +150,15 @@ vision_node:
     spot_enabled: true
     camera_x: 0.28           # как static TF base_link -> camera_link
     camera_y: 0.0
-    camera_z: 0.385
-    camera_pitch_deg: 10.0
+    camera_z: 0.30
+    camera_pitch_deg: 0.0
     spot_s_min: 110
     spot_v_min: 60
     spot_min_area_m2: 0.02
     spot_max_area_m2: 2.5
     spot_max_range_m: 3.5
     lane_enabled: true
-    lane_width_m: 3.5        # ширина полосы, если видна одна линия
+    lane_width_m: 3.5        # ожидаемая ширина для проверки пары линий
     lane_follow: center      # center — середина полосы; right — у правой линии на lane_keep_m
     lane_keep_m: 0.6
     lane_x_max_m: 6.0

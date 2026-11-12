@@ -24,7 +24,7 @@ class LaneCfg:
     min_points: int = 40
     min_span_m: float = 1.0   # прямая должна тянуться хотя бы на метр вперёд
     max_angle_deg: float = 40.0
-    lane_width: float = 3.5   # если видна одна линия
+    lane_width: float = 3.5   # ожидаемая ширина для проверки пары, не измерение
     follow: str = 'center'    # center — середина полосы; right/left — держаться у линии
     keep_m: float = 0.6       # для right/left: на сколько от линии держать центр робота
     iters: int = 80
@@ -61,13 +61,17 @@ class BirdView:
 def marking_points(bgr, bird: BirdView):
     """Точки разметки в метрах: светлые узкие полосы на виде сверху (белая и жёлтая краска)."""
     cfg = bird.cfg
-    v = bgr.max(axis=2)  # яркость: белое и жёлтое светлые, асфальт тёмный
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    h, s, value = cv2.split(hsv)
+    paint = ((s < 85) | ((h >= 15) & (h <= 40) & (s >= 60))) & (value >= 90)
+    v = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     top, valid = bird.warp(v)
     k = max(3, int(round(cfg.tophat_m / cfg.res)) | 1)
     hat = cv2.morphologyEx(top, cv2.MORPH_TOPHAT, cv2.getStructuringElement(cv2.MORPH_RECT, (k, 1)))
     # у края кадра top-hat видит ложную «полосу» — край обрезаем
     valid = cv2.erode(valid, np.ones((1, k), np.uint8))
-    rows, cols = np.nonzero((hat > cfg.thresh) & (valid > 0))
+    paint_top, _ = bird.warp(paint.astype(np.uint8)*255)
+    rows, cols = np.nonzero((hat > cfg.thresh) & (valid > 0) & (paint_top > 127))
     gx, gy = bird.to_ground(cols.astype(np.float32), rows.astype(np.float32))
     return np.stack([gx, gy], axis=1), len(rows) / max(1, np.count_nonzero(valid))
 
@@ -104,6 +108,9 @@ def fit_lines(pts, cfg: LaneCfg, rng=None):
             rest = rest[~best[1]]
             continue
         b, a = np.polyfit(sel[:, 0], sel[:, 1], 1)  # уточняем по всем точкам линии
+        if abs(b) > max_b:
+            rest = rest[~best[1]]
+            continue
         lines.append((float(a), float(b), int(best[0]), sel))
         rest = rest[np.abs(rest[:, 1] - (a + b * rest[:, 0])) >= cfg.inlier_m * 1.5]
     return lines
@@ -119,6 +126,15 @@ def lane_from_lines(lines, cfg: LaneCfg):
     if not left and not right:
         return None
     if left and right:
+        # Reject crossing/diverging edges BEFORE forcing a common slope.
+        lo = min(left[3][:,0].min(), right[3][:,0].min())
+        hi = max(left[3][:,0].max(), right[3][:,0].max())
+        if (abs(np.arctan(left[1])-np.arctan(right[1])) > np.radians(8) or
+                abs((left[1]-right[1])*(hi-lo)) > .5):
+            return None
+        widths = [(left[0]-right[0])+(left[1]-right[1])*x for x in (lo,hi)]
+        if not all(.4*cfg.lane_width < w < 1.6*cfg.lane_width for w in widths):
+            return None
         # края полосы параллельны: общий наклон по точкам обеих линий, у каждой свой сдвиг.
         # Так линия, видная только вдали, не уводит угол
         sx = sxy = 0.0
@@ -131,7 +147,11 @@ def lane_from_lines(lines, cfg: LaneCfg):
                        for ln in (left, right))
     else:
         b = (left or right)[1]
-    width = left[0] - right[0] if left and right else cfg.lane_width
+    if cfg.follow == 'center' and not (left and right):
+        return None  # a single edge cannot measure a lane centre or width
+    if (cfg.follow == 'right' and right is None) or (cfg.follow == 'left' and left is None):
+        return None
+    width = left[0] - right[0] if left and right else 0.
     if cfg.follow == 'right' and right:
         a = right[0] + cfg.keep_m
     elif cfg.follow == 'left' and left:
@@ -156,4 +176,43 @@ def detect_lane(bgr, bird: BirdView, rng=None, debug=None):
         debug['pts'], debug['clutter'] = pts, clutter
     if clutter > bird.cfg.clutter_max:
         return None  # на дороге краска — пара узких полос; когда «полос» всюду, прямые случайны
-    return lane_from_lines(fit_lines(pts, bird.cfg, rng), bird.cfg)
+    lines = fit_lines(pts, bird.cfg, rng)
+    lane = lane_from_lines(lines, bird.cfg)
+    if debug is not None:
+        debug['candidates'] = [ln[:2] for ln in lines]
+        debug['reason'] = 'single edge, centre unknown' if len(lines)==1 else 'edges inconsistent' if lines and lane is None else 'no marking'
+    return lane
+
+
+class LaneTracker:
+    """Require a stable sequence; never retain a lane after loss or a jump."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.last = self.filtered = None
+        self.count = 0
+        self.started = self.last_t = None
+
+    def update(self, lane, now):
+        if lane is None:
+            self.reset()
+            return None
+        stable = (self.last is not None and 0 < now-self.last_t <= .4 and
+                  abs(lane['offset']-self.last['offset']) < .25 and
+                  abs(lane['angle']-self.last['angle']) < np.radians(6) and
+                  abs(lane['width']-self.last['width']) < .4 and
+                  lane['lines'] == self.last['lines'])
+        if not stable:
+            self.reset()
+            self.started = now
+        self.count += 1
+        self.last, self.last_t = dict(lane), now
+        if self.count < 3 or now-self.started < .15:
+            return None
+        out = dict(lane)
+        if self.filtered is not None:
+            for key in ('offset', 'angle', 'width'):
+                out[key] = .35*lane[key]+.65*self.filtered[key]
+        self.filtered = out
+        return out
