@@ -171,7 +171,7 @@ ble_node:
     names: [ATSD-KPP, ATSD-ADMIN, ATSD-TEST, ATSD-SKLAD]
     ibeacon_uuid: E2C56DB5-DFFB-48D2-B060-D0F5A71096E0
     ibeacon_minors: [1, 2, 3, 4]
-    near_rssi: -65
+    near_rssi: -78
     hysteresis: 5
     lost_s: 4.0
     rate_hz: 2.0

@@ -28,7 +28,7 @@ class BleNode(Node):
         d('names', ['ATSD-KPP', 'ATSD-ADMIN', 'ATSD-TEST', 'ATSD-SKLAD'])
         d('ibeacon_uuid', 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0')
         d('ibeacon_minors', [1, 2, 3, 4])
-        d('near_rssi', -65)
+        d('near_rssi', -78)
         d('hysteresis', 5)
         d('lost_s', 4.0)
         d('rate_hz', 2.0)

@@ -26,7 +26,7 @@ class BeaconRule:
 class ZoneTracker:
     rules: list
     ibeacon_uuid: str = ''
-    near_rssi: int = -65
+    near_rssi: int = -78
     hysteresis: int = 5
     lost_s: float = 4.0
     alpha: float = 0.35
