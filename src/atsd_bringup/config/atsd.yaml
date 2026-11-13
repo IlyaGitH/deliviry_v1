@@ -75,6 +75,8 @@ lock_node:
     lock_pin: 19
     door_sensor_pin: 27
     use_door_sensor: false
+    min_battery_pct: 40.0   # ниже порога импульс запрещён
+    min_battery_voltage: 3.5 # напряжение ячейки X1202
     pulse_time_s: 0.4
     cooldown_s: 3.0
     block_while_moving: true

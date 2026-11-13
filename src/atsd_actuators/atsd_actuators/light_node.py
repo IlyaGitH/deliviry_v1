@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import time
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32, String, Bool
@@ -90,12 +92,15 @@ class LightNode(Node):
         self.strip_level = 0.0
         self.head_level = 0.0
         self.lock_busy = False
+        self.power_until = 0.0
         self.phase = 0.0
 
         self.create_subscription(Float32, 'lights/headlights', self.on_head, 10)
         self.create_subscription(Float32, 'lights/strip', self.on_strip, 10)
         self.create_subscription(String, 'lights/strip_mode', self.on_mode, 10)
         self.create_subscription(Bool, 'lock/busy', self.on_lock, 10)
+        self.pub_ready = self.create_publisher(String, 'lights/power_ready', 5)
+        self.create_subscription(String, 'lights/power_reserve', self.on_power_reserve, 5)
         self.pub_state = self.create_publisher(String, 'lights/state', 5)
 
         self.dt = 1.0 / float(p('tick_hz').value)
@@ -124,12 +129,23 @@ class LightNode(Node):
     def on_lock(self, msg: Bool):
         self.lock_busy = bool(msg.data)
 
+    def on_power_reserve(self, msg):
+        if not msg.data:
+            self.power_until = 0.0
+            return
+        # Dedicated reservation cannot be overridden by regular lighting commands.
+        self.power_until = time.monotonic() + 5.0
+        self.head.off_now()
+        self.strip.off_now()
+        if self.head.dev is not None and self.strip.dev is not None:
+            self.pub_ready.publish(String(data=msg.data))
+
     def tick(self):
         self.phase += self.dt
 
-        if self.dim_on_lock and self.lock_busy:
-            self.head.set(0.0)
-            self.strip.set(0.0)
+        if time.monotonic() < self.power_until or (self.dim_on_lock and self.lock_busy):
+            self.head.off_now()
+            self.strip.off_now()
         else:
             self.head.set(self.head_level)
             self.strip.set(self.strip_value())
