@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import math
 import uuid
 import threading
 import time
@@ -11,7 +10,6 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
-from sensor_msgs.msg import BatteryState
 
 from atsd_actuators.pins import DOOR_SENSOR, LOCK, check_pin, check_unique
 
@@ -37,8 +35,6 @@ class LockNode(Node):
         d('block_while_moving', True)
         d('zone_policy', 'warn')
         d('dry_run', False)
-        d('min_battery_pct', 40.0)
-        d('min_battery_voltage', 3.5)
 
         p = lambda n: self.get_parameter(n).value
         self.lock_pin = check_pin(p('lock_pin'), 'замок')
@@ -54,10 +50,6 @@ class LockNode(Node):
         self.mission_from = self.mission_to = None
         dry = bool(p('dry_run'))
 
-        self.min_battery_pct = max(40.0, float(p('min_battery_pct')))
-        self.min_battery_voltage = max(3.5, float(p('min_battery_voltage')))
-        self.battery = None
-        self.battery_ts = 0.0
         self.power_token = ''
         self.power_ready = threading.Event()
         self.dev = None
@@ -80,7 +72,6 @@ class LockNode(Node):
         self.create_service(Trigger, 'lock/unlock', self.on_unlock, callback_group=srv_group)
         self.create_subscription(String, 'mission/state', self.on_state, 10, callback_group=io_group)
         self.create_subscription(String, 'ble/zone', self.on_zone, 10, callback_group=io_group)
-        self.create_subscription(BatteryState, 'power/computer', self.on_battery, 5, callback_group=io_group)
         self.create_subscription(String, 'lights/power_ready', self.on_power_ready, 5, callback_group=io_group)
         self.pub_power = self.create_publisher(String, 'lights/power_reserve', 5)
         self.pub_busy = self.create_publisher(Bool, 'lock/busy', 5)
@@ -95,25 +86,9 @@ class LockNode(Node):
             f'{"GPIO" + str(self.door_pin) if self.use_door else "выкл"}, '
             f'блокировка в пути {"вкл" if self.block_moving else "выкл"}')
 
-    def on_battery(self, msg):
-        self.battery = msg
-        self.battery_ts = time.monotonic()
-
     def on_power_ready(self, msg):
         if self.power_token and msg.data == self.power_token:
             self.power_ready.set()
-
-    def power_error(self):
-        b = self.battery
-        if b is None or time.monotonic() - self.battery_ts > 3.0:
-            return 'Нет свежих данных батареи Pi — открытие отменено'
-        if not b.present or not math.isfinite(b.percentage) or not math.isfinite(b.voltage):
-            return 'Нет достоверных данных батареи Pi — открытие отменено'
-        if not 0.0 <= b.percentage <= 1.0:
-            return 'Некорректный заряд батареи Pi'
-        if b.percentage * 100 < self.min_battery_pct or b.voltage < self.min_battery_voltage:
-            return f'Недостаточное питание для замка: {b.percentage * 100:.1f}%, {b.voltage:.2f} В'
-        return ''
 
     def on_state(self, msg: String):
         try:
@@ -145,9 +120,8 @@ class LockNode(Node):
 
     def on_unlock(self, request, response):
         response.success = False
-        error = self.power_error()
-        if self.dev is None or error:
-            response.message = error or 'GPIO замка недоступен — импульс не подан'
+        if self.dev is None:
+            response.message = 'GPIO замка недоступен — импульс не подан'
             return response
         with self.guard:
             if self.block_moving and self.mission_state in TRAVEL:
@@ -183,9 +157,8 @@ class LockNode(Node):
                 return response
             # Allow supply to recover after removing lighting load.
             time.sleep(0.3)
-            error = self.power_error()
-            if error or (self.block_moving and self.mission_state in TRAVEL):
-                response.message = error or 'Робот в пути — отсек заблокирован'
+            if self.block_moving and self.mission_state in TRAVEL:
+                response.message = 'Робот в пути — отсек заблокирован'
                 return response
             self.get_logger().info('Подаю импульс замка после отключения света')
             self.dev.on()

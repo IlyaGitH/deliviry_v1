@@ -3,7 +3,6 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 import threading
-import math
 import uuid
 
 import pytest
@@ -19,7 +18,7 @@ def rig():
         clock.now += dt
     env = dict(Node=object, String=NS, Bool=NS, Float32=NS,
                time=NS(monotonic=lambda: clock.now, sleep=sleep),
-               math=math, uuid=uuid, TRAVEL=('TO_DROP',), MODES=('solid',))
+               uuid=uuid, TRAVEL=('TO_DROP',), MODES=('solid',))
     for file in ('lock_node.py', 'light_node.py'):
         tree = ast.parse((ROOT / file).read_text())
         classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
@@ -38,7 +37,6 @@ def rig():
     light.head_level = light.strip_level = .4
     light.mode = 'solid'
     lock = env['LockNode'].__new__(env['LockNode'])
-    lock.min_battery_pct, lock.min_battery_voltage = 40, 3.5
     lock.battery_ts = clock.now
     lock.battery = NS(present=True, percentage=.5, voltage=3.8)
     lock.guard = threading.Lock()
@@ -67,12 +65,12 @@ def rig():
     (float('nan'), 3.8, True, 0), (.8, float('nan'), True, 0),
     (.8, 3.8, False, 0), (.8, 3.8, True, 4), (1.1, 3.8, True, 0),
 ])
-def test_bad_power_never_energizes(rig, pct, volts, present, age):
+def test_battery_values_do_not_block_unlock(rig, pct, volts, present, age):
     lock, _, clock, timeline = rig
     lock.battery = NS(percentage=pct, voltage=volts, present=present)
     clock.now += age
-    assert not lock.on_unlock(None, NS()).success
-    assert not timeline
+    assert lock.on_unlock(None, NS()).success
+    assert timeline[0][0] == 'on'
 
 
 def test_lights_off_before_pulse_and_recover_after(rig):
@@ -104,14 +102,14 @@ def test_gpio_exception_releases_reservation(rig):
     assert not lock.busy and light.power_until == 0
 
 
-def test_battery_drops_during_preparation(rig):
+def test_battery_drop_does_not_cancel(rig):
     lock, light, _, timeline = rig
     def ack(msg):
         lock.battery.percentage = .3
         lock.on_power_ready(msg)
     light.pub_ready.publish = ack
-    assert not lock.on_unlock(None, NS()).success
-    assert all(t[0] != 'on' for t in timeline)
+    assert lock.on_unlock(None, NS()).success
+    assert timeline[0][0] == 'on'
 
 
 def test_no_gpio_does_not_report_open(rig):
@@ -139,3 +137,11 @@ def test_reservation_expires_if_lock_process_disappears(rig):
     clock.now += 6
     light.tick()
     assert light.head.current > 0
+
+
+def test_no_battery_telemetry_required(rig):
+    lock, _, _, timeline = rig
+    del lock.battery
+    del lock.battery_ts
+    assert lock.on_unlock(None, NS()).success
+    assert timeline[0][0] == 'on'
