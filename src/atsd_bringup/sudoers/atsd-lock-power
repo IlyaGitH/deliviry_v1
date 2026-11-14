@@ -1,0 +1,2 @@
+# Only fixed CPU-reservation operations; no arbitrary root commands.
+atsd ALL=(root) NOPASSWD: /usr/bin/systemctl restart atsd-lock-power.service, /usr/bin/systemctl stop atsd-lock-power.service

@@ -18,7 +18,7 @@ def rig():
         clock.now += dt
     env = dict(Node=object, String=NS, Bool=NS, Float32=NS,
                time=NS(monotonic=lambda: clock.now, sleep=sleep),
-               uuid=uuid, TRAVEL=('TO_DROP',), MODES=('solid',))
+               uuid=uuid, cpu_reserve=lambda action: None, TRAVEL=('TO_DROP',), MODES=('solid',))
     for file in ('lock_node.py', 'light_node.py'):
         tree = ast.parse((ROOT / file).read_text())
         classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
@@ -49,7 +49,7 @@ def rig():
     lock.last_pulse = 0
     lock.cooldown = 3
     lock.pulse_time = .4
-    lock.get_logger = lambda: NS(info=lambda _: None)
+    lock.get_logger = lambda: NS(info=lambda _: None, error=lambda _: None)
     lock.pub_busy = NS(publish=lambda m: setattr(light, 'lock_busy', m.data))
     lock.pub_power = NS(publish=light.on_power_reserve)
     light.pub_ready = NS(publish=lock.on_power_ready)
@@ -145,3 +145,52 @@ def test_no_battery_telemetry_required(rig):
     del lock.battery_ts
     assert lock.on_unlock(None, NS()).success
     assert timeline[0][0] == 'on'
+
+
+def test_cpu_reserved_before_gpio_and_restored_after(rig):
+    lock, _, clock, timeline = rig
+    events = []
+    def cpu(action):
+        events.append((action, clock.now))
+        if action == 'restart':
+            clock.now += 2
+    lock.on_unlock.__globals__['cpu_reserve'] = cpu
+    assert lock.on_unlock(None, NS()).success
+    assert events[0] == ('restart', 100)
+    assert timeline[0][1] == pytest.approx(102.3)
+    assert events[-1][0] == 'stop'
+    assert events[-1][1] - timeline[1][1] == pytest.approx(1)
+
+
+def test_failed_cpu_reservation_never_pulses(rig):
+    lock, _, _, timeline = rig
+    calls = []
+    def cpu(action):
+        calls.append(action)
+        if action == 'restart':
+            raise RuntimeError('service unavailable')
+    lock.on_unlock.__globals__['cpu_reserve'] = cpu
+    assert not lock.on_unlock(None, NS()).success
+    assert calls == ['restart', 'stop']
+    assert all(t[0] != 'on' for t in timeline)
+    assert not lock.busy
+
+
+def test_expired_cpu_reservation_cancels_pulse(rig):
+    lock, light, clock, timeline = rig
+    def ack(msg):
+        clock.now += 11
+        lock.on_power_ready(msg)
+    light.pub_ready.publish = ack
+    assert not lock.on_unlock(None, NS()).success
+    assert all(t[0] != 'on' for t in timeline)
+
+
+def test_cpu_stop_failure_does_not_leave_node_busy(rig):
+    lock, _, _, _ = rig
+    def cpu(action):
+        if action == 'stop':
+            raise RuntimeError('systemd unavailable')
+    lock.on_unlock.__globals__['cpu_reserve'] = cpu
+    assert lock.on_unlock(None, NS()).success
+    assert not lock.busy

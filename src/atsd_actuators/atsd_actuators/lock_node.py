@@ -11,6 +11,7 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
+from atsd_actuators.cpu_reserve import cpu_reserve
 from atsd_actuators.pins import DOOR_SENSOR, LOCK, check_pin, check_unique
 
 try:
@@ -150,7 +151,9 @@ class LockNode(Node):
         self.pub_busy.publish(Bool(data=True))
         self.power_token = uuid.uuid4().hex
         self.power_ready.clear()
+        cpu_started_at = time.monotonic()
         try:
+            cpu_reserve('restart')
             self.pub_power.publish(String(data=self.power_token))
             if not self.power_ready.wait(1.0):
                 response.message = 'Нет подтверждения отключения света — импульс отменён'
@@ -159,6 +162,9 @@ class LockNode(Node):
             time.sleep(0.3)
             if self.block_moving and self.mission_state in TRAVEL:
                 response.message = 'Робот в пути — отсек заблокирован'
+                return response
+            if time.monotonic() - cpu_started_at > 10.0:
+                response.message = 'Истекло время подготовки питания — импульс отменён'
                 return response
             self.get_logger().info('Подаю импульс замка после отключения света')
             self.dev.on()
@@ -180,6 +186,12 @@ class LockNode(Node):
                     self.busy = False
                     self.last_pulse = time.monotonic()
                 self.pub_busy.publish(Bool(data=False))
+                try:
+                    cpu_reserve('stop')
+                except Exception as e:
+                    self.get_logger().error(
+                        f'Не удалось восстановить CPU немедленно: {e}; '
+                        'служба завершит ограничение по таймеру')
         return response
 
     def publish_status(self):

@@ -465,7 +465,7 @@ class RosLink:
         self._pub_resume.publish(self._empty())
         return True
 
-    def unlock(self, timeout=3.0):
+    def unlock(self, timeout=25.0):
         if self.mock:
             self._set(['lock', 'busy'], True)
             threading.Timer(0.6, lambda: self._set(['lock', 'busy'], False)).start()
@@ -475,8 +475,8 @@ class RosLink:
         if not self._unlock_cli.wait_for_service(timeout_sec=1.0):
             return False, 'Сервис /lock/unlock недоступен'
         future = self._unlock_cli.call_async(self._trigger_type.Request())
-        deadline = time.time() + timeout
-        while not future.done() and time.time() < deadline:
+        deadline = time.monotonic() + timeout
+        while not future.done() and time.monotonic() < deadline:
             time.sleep(0.02)
         if not future.done():
             return False, 'Замок не ответил вовремя'

@@ -1,0 +1,17 @@
+[Unit]
+Description=ATSD | Временное ограничение CPU для замка
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+RuntimeDirectory=atsd-lock-power
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/atsd-lock-power.py hold
+ExecStopPost=/usr/bin/python3 -I /usr/local/libexec/atsd-lock-power.py restore
+TimeoutStartSec=5
+TimeoutStopSec=3
+RuntimeMaxSec=16
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes

@@ -18,6 +18,11 @@ chown -R atsd:atsd "${WS_DIR}"
 sudo -u atsd bash -c 'set -e; source /opt/ros/jazzy/setup.bash; cd /opt/atsd/ws; colcon build --symlink-install'
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" /opt/atsd/run.sh
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/wifi.sh" /opt/atsd/wifi.sh
+# Root-owned helper must not execute from the atsd-writable ROS workspace.
+install -d -o root -g root -m 755 /usr/local/libexec
+install -o root -g root -m 755 "${WS_DIR}/src/atsd_bringup/systemd/lock-power.py" /usr/local/libexec/atsd-lock-power.py
+visudo -cf "${WS_DIR}/src/atsd_bringup/sudoers/atsd-lock-power"
+install -o root -g root -m 440 "${WS_DIR}/src/atsd_bringup/sudoers/atsd-lock-power" /etc/sudoers.d/atsd-lock-power
 install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/udev/99-atsd.rules" /etc/udev/rules.d/

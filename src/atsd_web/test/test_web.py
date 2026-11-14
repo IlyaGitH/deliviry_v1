@@ -156,3 +156,19 @@ def test_lidar_odometry_diagnostic_does_not_remain_valid_after_publisher_loss(mo
     clock[0]=12.
     result=link.snapshot()['lidar_odom']
     assert not result['valid'] and not result['slip_suspected'] and '_received' not in result
+
+
+def test_unlock_waits_for_cpu_preparation(monkeypatch):
+    from types import SimpleNamespace as NS
+    from atsd_web import ros_link
+    clock = [0.0]
+    monkeypatch.setattr(ros_link.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(ros_link.time, 'sleep', lambda dt: clock.__setitem__(0, clock[0] + dt))
+    link = RosLink(mock=True)
+    link.mock = False
+    link._node = object()
+    link._trigger_type = NS(Request=lambda: None)
+    future = NS(done=lambda: clock[0] >= 5.0,
+                result=lambda: NS(success=True, message='Импульс открытия подан'))
+    link._unlock_cli = NS(wait_for_service=lambda **kw: True, call_async=lambda _: future)
+    assert link.unlock() == (True, 'Импульс открытия подан')
