@@ -258,3 +258,13 @@ def test_short_reverse_does_not_bypass_expired_attempt():
     p.avoid_started = 1.
     d = command(p, space(), now=200., goal=(-1.,0.))
     assert d.state == 'escape_timeout' and d.v == 0.
+
+
+def test_half_meter_corridor_keeps_side_walls_out_of_planned_footprint():
+    c=LocalCfg(front=.64,rear=.26,half_width=.20)
+    walls=[((-2.,-.4),(5.,-.4)),((-2.,.4),(5.,.4))]
+    s=space(walls,c)
+    for footprint in (s.foot,s.plan_foot,s.plan_foot_forward):
+        assert np.max(np.abs(footprint[:,1])) == pytest.approx(.25)
+    assert s.arc((0,0,0),1.,0.,planning=True) is not None
+    assert s.arc((0,0,0),1.,1.,planning=True) is None

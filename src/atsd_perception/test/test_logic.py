@@ -66,7 +66,7 @@ def light(color_row):
 
 
 def test_classify_light_colors():
-    for c in 'RYG':
+    for c in 'RG':
         assert classify_light(light(c))[0] == c
     assert classify_light(np.zeros((90, 30, 3), np.uint8))[0] is None
 
@@ -161,3 +161,16 @@ def test_ncnn_yolo_end_to_end_with_tiny_net(tmp_path):
     dets = model.predict(np.zeros((480, 640, 3), np.uint8), conf=0.5)
     assert len(dets) == 1 and dets[0]['cls'] == 'stop'
     assert np.allclose(dets[0]['box'], [270, 190, 370, 290], atol=1.0)
+
+
+def test_largest_sign_across_classes_and_light_model():
+    from atsd_perception.vision_logic import largest_sign, model_light_color
+    small={'kind':'STOP','box':[0,0,10,40]}
+    large={'kind':'CROSS','box':[0,0,30,30]}
+    lamp={'kind':'LIGHT','box':[0,0,100,100]}
+    assert largest_sign([small,large,lamp]) is large
+    assert largest_sign([lamp]) is None
+    assert model_light_color('traffic_light_red') == 'R'
+    assert model_light_color('traffic_light_green') == 'G'
+    assert model_light_color('traffic_light_yellow') is None
+    assert classify_light(light('Y'))[0] is None

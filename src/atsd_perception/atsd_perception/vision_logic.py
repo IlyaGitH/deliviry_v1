@@ -28,7 +28,6 @@ def classify_light(bgr_roi, cfg: LightHsv = LightHsv()):
 
     masks = {
         'R': bright & ((h <= 10) | (h >= 160)),
-        'Y': bright & (h >= 15) & (h <= 35),
         'G': bright & (h >= 40) & (h <= 95),
     }
     area = float(bgr_roi.shape[0] * bgr_roi.shape[1])
@@ -153,3 +152,13 @@ def find_red_spot(bgr, cam: CameraGeom, cfg: SpotCfg = SpotCfg()):
         if best is None or area > best['area']:
             best = {'x': float(gx), 'y': float(gy), 'area': float(area), 'box': [x, y, x + w, y + h]}
     return best
+
+
+def largest_sign(detections):
+    """One sign across all classes; image area is a proximity heuristic."""
+    signs = [d for d in detections if d.get('kind') in ('STOP', 'CROSS', 'BUMP')]
+    return max(signs, key=lambda d: max(0,d['box'][2]-d['box'][0])*max(0,d['box'][3]-d['box'][1]), default=None)
+
+
+def model_light_color(name):
+    return {'traffic_light_red': 'R', 'traffic_light_green': 'G'}.get(name)

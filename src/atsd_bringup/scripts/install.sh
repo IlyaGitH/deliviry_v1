@@ -275,6 +275,7 @@ else
   warn "ROS не найден — сборка пропущена"
 fi
 
+bash "${WS_DIR}/src/atsd_bringup/scripts/install_vision_model.sh"
 log "Ставлю сервисы и правила"
 bash "${SRC_DIR}/atsd_bringup/scripts/remove_lock_cpu.sh"
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" "${ATSD_HOME}/run.sh"
@@ -334,12 +335,9 @@ cat <<MSG
      гейдж X1202, спросит версию прошивки у Brain и по очереди щёлкнет
      фарами, лентой, зуммером и замком.
 
-  3. Модель знаков положить в ${ATSD_HOME}/models/signs_ncnn_model
-     (папка после  yolo export model=best.pt format=ncnn), затем:
-       sudo chown -R ${ATSD_USER}: ${ATSD_HOME}/models
+  3. Модель знаков и красного/зелёного светофора уже установлена из репозитория.
 
-  4. Построить карту (один раз, и после перестановки в помещении) —
-     раздел «Карта» в README. Без карты ${ATSD_HOME}/maps/map рейсы не поедут.
+  4. В вебе задайте дороги и точки на сетке, затем положение «Робот здесь».
 
   5. Запустить всё:
        sudo systemctl start atsd.target

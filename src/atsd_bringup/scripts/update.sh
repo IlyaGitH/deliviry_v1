@@ -17,6 +17,7 @@ cp -a "${WS_DIR}/src" "${BACKUP_DIR}/src"
 systemctl stop atsd.target
 bash "${SRC_DIR}/atsd_bringup/scripts/remove_lock_cpu.sh"
 rsync -a --delete --exclude __pycache__/ --exclude '*.pyc' "${SRC_DIR}/" "${WS_DIR}/src/"
+bash "${WS_DIR}/src/atsd_bringup/scripts/install_vision_model.sh"
 chown -R atsd:atsd "${WS_DIR}"
 sudo -u atsd bash -c 'set -e; source /opt/ros/jazzy/setup.bash; cd /opt/atsd/ws; colcon build --symlink-install'
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" /opt/atsd/run.sh

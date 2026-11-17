@@ -11,7 +11,7 @@ from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from atsd_perception.lane_logic import BirdView, LaneCfg, LaneTracker, detect_lane
-from atsd_perception.vision_logic import (CameraGeom, Confirm, LightHsv, SpotCfg, classify_light,
+from atsd_perception.vision_logic import (CameraGeom, Confirm, LightHsv, SpotCfg, classify_light, largest_sign, model_light_color,
                                          distance_from_height, find_red_spot, ground_to_pixel)
 
 try:
@@ -84,6 +84,7 @@ class VisionNode(Node):
                           ('BUMP', 'class_bump'), ('LIGHT', 'class_light')):
             for name in p(key):
                 self.classes[str(name)] = kind
+        self.classes.update({'traffic_light_red': 'LIGHT', 'traffic_light_green': 'LIGHT'})
         self.hsv = LightHsv(int(p('hsv_s_min')), int(p('hsv_v_min')))
         self.sign_conf = {k: Confirm(int(p('sign_confirm')), 3) for k in ('STOP', 'CROSS', 'BUMP')}
         self.light_conf = Confirm(int(p('light_confirm')), int(p('light_confirm')) + 1)
@@ -247,22 +248,27 @@ class VisionNode(Node):
 
         seen = {'STOP': None, 'CROSS': None, 'BUMP': None}
         best_light = None
+        selected_sign = largest_sign(dets)
         for det in dets:
             x1, y1, x2, y2 = det['box']
             h = y2 - y1
             if det['kind'] == 'LIGHT':
                 dist = distance_from_height(h, self.P['light_height_m'], self.P['focal_px'])
                 roi = frame[max(0, int(y1)):int(y2), max(0, int(x1)):int(x2)]
-                color, _ = classify_light(roi, self.hsv)
+                color = model_light_color(det['cls'])
+                if color is None:
+                    color, _ = classify_light(roi, self.hsv)
                 det['color'] = color
                 det['dist'] = round(max(0.0, dist - self.P['camera_to_front_m']), 2)
-                if color and (best_light is None or h > best_light[2]):
-                    best_light = (color, det['dist'], h)
+                area = max(0, x2-x1)*max(0, h)
+                if color and (best_light is None or area > best_light[2]):
+                    best_light = (color, det['dist'], area)
             elif det['kind'] in seen:
                 dist = distance_from_height(h, self.P['sign_height_m'], self.P['focal_px'])
                 dist = max(0.0, dist - self.P['camera_to_front_m'])
                 det['dist'] = round(dist, 2)
-                if dist <= self.P['max_sign_distance_m']:
+                det['selected'] = det is selected_sign
+                if det is selected_sign and dist <= self.P['max_sign_distance_m']:
                     prev = seen[det['kind']]
                     if prev is None or dist < prev:
                         seen[det['kind']] = dist

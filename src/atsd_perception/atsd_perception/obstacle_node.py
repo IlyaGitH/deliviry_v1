@@ -22,7 +22,8 @@ class ObstacleNode(Node):
         d('laser_yaw_deg', 0.0)
         d('front_x', 0.35)
         d('half_width', 0.25)
-        d('margin', 0.10)
+        d('margin', 0.10)  # legacy parameter
+        d('corridor_width_m', 0.50)
         d('look_ahead', 2.5)
         d('detour_offset', 0.65)
         d('min_points', 3)
@@ -33,8 +34,8 @@ class ObstacleNode(Node):
 
         p = lambda n: self.get_parameter(n).value
         self.cfg = CorridorConfig(
-            front_x=float(p('front_x')), half_width=float(p('half_width')),
-            margin=float(p('margin')), look_ahead=float(p('look_ahead')),
+            front_x=float(p('front_x')), half_width=max(float(p('half_width')), float(p('corridor_width_m'))/2),
+            margin=0.0, look_ahead=float(p('look_ahead')),
             detour_offset=float(p('detour_offset')), min_points=int(p('min_points')),
             default_side=str(p('default_side')).upper()[:1])
         self.laser = (float(p('laser_x')), float(p('laser_y')), math.radians(float(p('laser_yaw_deg'))))

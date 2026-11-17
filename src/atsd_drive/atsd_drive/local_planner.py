@@ -25,8 +25,9 @@ class LocalCfg:
     front: float = .35
     rear: float = .40
     half_width: float = .25
+    lateral_margin: float = .05
     margin: float = .12
-    resolution: float = .10
+    resolution: float = .05
     extent: float = 7.0
     radius: float = 1.0
     cruise_speed: float = .8
@@ -46,7 +47,7 @@ class LocalCfg:
     max_avoid_s: float = 120.0
 
     def __post_init__(self):
-        positive = (self.front, self.rear, self.half_width, self.margin, self.resolution,
+        positive = (self.front, self.rear, self.half_width, self.lateral_margin, self.margin, self.resolution,
                     self.extent, self.radius, self.cruise_speed, self.forward_speed, self.reverse_speed,
                     self.deceleration, self.step, self.scan_timeout, self.odom_timeout,
                     self.budget_s, self.short_reverse_m, self.max_reverse_m, self.stall_s, self.max_avoid_s)
@@ -100,17 +101,18 @@ class ScanSpace:
         # Dense footprint includes interior, not just centre or leading edge.
         fx = np.linspace(-cfg.rear-cfg.margin, cfg.front+cfg.margin,
                          int(math.ceil((cfg.front+cfg.rear+2*cfg.margin)/(cfg.resolution/2)))+1)
-        fy = np.linspace(-cfg.half_width-cfg.margin, cfg.half_width+cfg.margin,
-                         int(math.ceil((2*cfg.half_width+2*cfg.margin)/(cfg.resolution/2)))+1)
+        fy = np.linspace(-cfg.half_width-cfg.lateral_margin, cfg.half_width+cfg.lateral_margin,
+                         int(math.ceil((2*cfg.half_width+2*cfg.lateral_margin)/(cfg.resolution/2)))+1)
         self.foot = np.array(np.meshgrid(fx, fy)).reshape(2, -1).T
         # Extra raster/scan-to-scan clearance for planned movement; the stopping
         # check uses the configured physical margin. Forward guard mirrors Brain.
         extra = .15
-        fy = np.arange(-cfg.half_width-cfg.margin-extra, cfg.half_width+cfg.margin+extra+.025, .05)
+        fy = np.arange(-cfg.half_width-cfg.lateral_margin, cfg.half_width+cfg.lateral_margin+.025, .05)
         fx = np.arange(-cfg.rear-cfg.margin-extra, cfg.front+cfg.margin+extra+.025, .05)
         self.plan_foot = np.array(np.meshgrid(fx, fy)).reshape(2, -1).T
         gx = np.arange(cfg.front, cfg.front+.60, .05)
-        gy = np.arange(-.4, .425, .05)
+        gy = np.linspace(-cfg.half_width-cfg.lateral_margin, cfg.half_width+cfg.lateral_margin,
+                         int(math.ceil(2*(cfg.half_width+cfg.lateral_margin)/.05))+1)
         self.plan_foot_forward = np.concatenate((self.plan_foot, np.array(np.meshgrid(gx,gy)).reshape(2,-1).T))
 
     def clear(self, poses, planning=False, forward=False):
@@ -131,7 +133,8 @@ class ScanSpace:
 
     def front_clear(self, pose):
         x = np.arange(self.cfg.front, self.cfg.front+.55, .1)
-        y = np.arange(-.35, .36, .1)
+        half = self.cfg.half_width+self.cfg.lateral_margin
+        y = np.linspace(-half, half, int(math.ceil(2*half/.05))+1)
         xx, yy = np.meshgrid(x, y)
         cs, sn = math.cos(pose[2]), math.sin(pose[2])
         ix = np.rint((pose[0]+cs*xx-sn*yy)/self.cfg.resolution).astype(int)+self.n//2

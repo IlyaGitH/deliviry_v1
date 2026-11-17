@@ -70,7 +70,7 @@ const double   BUMP_FACTOR          = 0.35;
 const double   LIGHT_STOP_OFFSET_MM = 450.0;
 
 // Объезд делает локальный планировщик Pi, здесь последний рубеж: ближе OBST_STOP_MM вперёд не ехать
-const double   OBST_SLOW_MM        = 1800.0;
+const double   OBST_SLOW_MM        = 1200.0;
 const double   OBST_STOP_MM        = 450.0;
 const uint32_t OBST_MSG_TIMEOUT_MS = 400;
 

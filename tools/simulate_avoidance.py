@@ -139,7 +139,7 @@ def run(name, data, duration=100., cfg=None):
         front=raycast(pose,segments)
         angles=-math.pi+np.arange(455)*2*math.pi/455
         xx=.29+front*np.cos(angles); yy=front*np.sin(angles)
-        guard=np.any(np.isfinite(front)&(xx>cfg.front)&(xx<cfg.front+.5)&(abs(yy)<.35))
+        guard=np.any(np.isfinite(front)&(xx>cfg.front)&(xx<cfg.front+.5)&(abs(yy)<cfg.half_width+cfg.lateral_margin))
         target_v,target_w=d.v,d.w
         if guard and target_v>0: target_v=target_w=0.
         old_v=v
