@@ -12,7 +12,6 @@ def generate_launch_description():
     use_lidar  = LaunchConfiguration('use_lidar')
     use_lidar_odom = LaunchConfiguration('use_lidar_odometry')
     use_camera = LaunchConfiguration('use_camera')
-    use_gnss   = LaunchConfiguration('use_gnss')
     use_ble    = LaunchConfiguration('use_ble')
     use_wifi   = LaunchConfiguration('use_wifi_locator')
     use_imu    = LaunchConfiguration('use_imu')
@@ -21,7 +20,6 @@ def generate_launch_description():
         DeclareLaunchArgument('use_lidar',  default_value='true'),
         DeclareLaunchArgument('use_lidar_odometry', default_value=use_lidar),
         DeclareLaunchArgument('use_camera', default_value='false'),
-        DeclareLaunchArgument('use_gnss',   default_value='true'),
         DeclareLaunchArgument('use_ble',    default_value='true'),
         DeclareLaunchArgument('use_wifi_locator', default_value='false'),
         DeclareLaunchArgument('use_imu', default_value='true'),
@@ -67,11 +65,6 @@ def generate_launch_description():
              output='screen', respawn=True, respawn_delay=10.0,
              condition=IfCondition(use_wifi)),
 
-        Node(package='atsd_sensors', executable='gnss_node',
-             name='gnss_node', parameters=[cfg],
-             output='screen', respawn=True, respawn_delay=3.0,
-             condition=IfCondition(use_gnss)),
-
         Node(package='tf2_ros', executable='static_transform_publisher',
              name='tf_base_laser',
              arguments=['0.29', '0.0', '0.22', '0', '0', '0',
@@ -80,10 +73,6 @@ def generate_launch_description():
              name='tf_base_camera',
              arguments=['0.28', '0.0', '0.30', '0', '0', '0',
                         'base_link', 'camera_link']),
-        Node(package='tf2_ros', executable='static_transform_publisher',
-             name='tf_base_gnss',
-             arguments=['0.11', '0.0', '0.36', '0', '0', '0',
-                        'base_link', 'gnss_link']),
         Node(package='tf2_ros', executable='static_transform_publisher',
              name='tf_footprint',
              arguments=['0', '0', '0', '0', '0', '0',

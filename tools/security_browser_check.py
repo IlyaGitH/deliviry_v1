@@ -95,13 +95,18 @@ try:
   # Browser server trust bypass is limited to this isolated test. curl above verifies real CA/SAN.
   context=browser.new_context(ignore_https_errors=True,client_certificates=[
      {'origin':url,'certPath':str(TMP/'android.crt'),'keyPath':str(TMP/'android.key')}])
-  page=context.new_page();errors=[]
+  page=context.new_page();errors=[]; requests=[]
+  page.on('request',lambda r:requests.append(r.url))
   page.on('pageerror',lambda e:errors.append(str(e)))
   page.goto(url+'/login')
   page.fill('#secret',(m.EXPORT/'admin-password.txt').read_text().strip())
   page.click('button[type=submit]')
   page.wait_for_url(url+'/',timeout=10000)
   page.locator('#selFrom option').first.wait_for(state='attached')
+  assert page.locator('#mapSeg').count()==0
+  assert '100 × 100' in page.locator('#mapHint').inner_text()
+  page.click('#btnResetGrid')
+  assert page.evaluate('Grid100.bounds(CFG.grid).x1-Grid100.bounds(CFG.grid).x0')==100
   page.screenshot(path=str(TMP/'admin.png'))
   page.click('#btnCreate')
   page.locator('#orderLinks:not(.hidden)').wait_for()
@@ -113,6 +118,8 @@ try:
   page.goto(url+'/debug/')
   page.wait_for_timeout(600)
   assert not errors,errors
+  assert 'GPS none' not in page.locator('body').inner_text()
+  assert not any('/api/map/' in u or 'yandex.ru' in u or 'overpass-api' in u for u in requests)
   page.screenshot(path=str(TMP/'debug.png'))
   for device,link,role in [('ios',sender_link,'sender'),('ubuntu',receiver_link,'receiver')]:
    guest=browser.new_context(ignore_https_errors=True,client_certificates=[
@@ -135,4 +142,8 @@ try:
 finally:
  if ng:ng.terminate();ng.wait(timeout=5)
  be.terminate();be.wait(timeout=5)
+ artifacts=os.environ.get('ATSD_TEST_ARTIFACTS')
+ if artifacts:
+  dest=Path(artifacts);dest.mkdir(parents=True,exist_ok=True)
+  for screenshot in TMP.glob('*.png'):shutil.copy2(screenshot,dest/screenshot.name)
  shutil.rmtree(TMP)

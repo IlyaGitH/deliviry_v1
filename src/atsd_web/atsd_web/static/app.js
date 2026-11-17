@@ -8,16 +8,13 @@ const cv = $('map'), ctx = cv.getContext('2d');
 
 let CFG = { points: [], maps: {} };
 let LAST = null;
-const MIN_SPAN = 150;
 let mapZoom = 1;      // колесо мыши над картой
-let mapMode = 'map';  // подложка Яндекса: map — схема, sat — спутник
 let placing = null;
 let settingPose = null;  // null | 'pos' | {x, y} — «Робот здесь»
 let localPoints = null;
 let roadEditor = null, roadView = null, roadRevision = null, roadDelete = false;
 let previewPlan = null;
 let mapPan = {x:0,y:0};
-const images = {};
 
 const EVENT_RU = {
   SECURITY_REAR_INTRUSION: 'Тревога: объект в задней части корпуса; движение не изменено',
@@ -112,21 +109,6 @@ async function api(path, opts) {
   return r.json();
 }
 
-function activeMapKey() {
-  return mapMode;
-}
-
-function loadImage(key) {
-  const meta = CFG.maps[key];
-  if (!meta || images[key] !== undefined) return;
-  const img = new Image();
-  img.onload = () => { images[key] = img; draw(); };
-  img.onerror = () => { images[key] = null; };
-  images[key] = undefined;
-  img.src = meta.image;
-  images[key] = img;
-}
-
 function fitCanvas() {
   const r = cv.parentElement.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -137,28 +119,14 @@ function fitCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-// место робота известно: GPS, «Робот здесь» или (без nav_node) нет сведений об обратном
+// Начальная позиция задаётся оператором в локальных метрах.
 function poseKnown() {
   return !!LAST && (LAST.telemetry.road || {}).ready !== false;
 }
 
 function view() {
   if (roadView) return roadView;
-  const pts = (localPoints || CFG.points);
-  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-  if (poseKnown()) { xs.push(LAST.telemetry.pose.x); ys.push(LAST.telemetry.pose.y); }
-  Object.values((CFG.roads || {}).nodes || {}).forEach(([x, y]) => { xs.push(x); ys.push(y); });
-  if (!xs.length) { xs.push(0); ys.push(0); }
-
-  const pad = 6;
-  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad;
-  const minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
-
-  // не меньше MIN_SPAN м: карта Яндекса растянутой до пары точек — каша из пикселей
-  const w = cv.clientWidth, h = cv.clientHeight;
-  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-  const s = Math.min(w / Math.max(maxX - minX, MIN_SPAN), h / Math.max(maxY - minY, MIN_SPAN * h / w)) * mapZoom;
-  return { s, ox: w / 2 - cx * s + mapPan.x*s, oy: h / 2 + cy * s + mapPan.y*s };
+  return Grid100.view(CFG.grid, cv.clientWidth, cv.clientHeight, mapZoom, mapPan);
 }
 
 const toScreen = (v, x, y) => [v.ox + x * v.s, v.oy - y * v.s];
@@ -170,30 +138,8 @@ function draw() {
   const w = cv.clientWidth, h = cv.clientHeight;
   ctx.clearRect(0, 0, w, h);
 
-  const key = activeMapKey();
-  const meta = CFG.maps[key];
-  const img = images[key];
-
-  const onMap = !!(img && img.complete && img.naturalWidth);  // светлая карта — тёмные линии и подписи
-  if (onMap) {
-    const mpp = meta.meters_per_pixel;
-    const [ox, oy] = meta.origin;
-    const wm = img.naturalWidth * mpp, hm = img.naturalHeight * mpp;
-    const [sx, sy] = toScreen(v, ox, oy + hm);
-    ctx.drawImage(img, sx, sy, wm * v.s, hm * v.s);
-  } else {
-    ctx.strokeStyle = '#1b262e';
-    ctx.lineWidth = 1;
-    const step = 5;
-    for (let x = -100; x <= 200; x += step) {
-      const [px] = toScreen(v, x, 0);
-      ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke();
-    }
-    for (let y = -100; y <= 200; y += step) {
-      const [, py] = toScreen(v, 0, y);
-      ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(w, py); ctx.stroke();
-    }
-  }
+  Grid100.draw(ctx, CFG.grid, v);
+  const onMap = false;
 
   // граф дорог (roads.json): по нему строится маршрут
   const roads = roadEditor ? roadEditor.data : (CFG.roads || {});
@@ -218,15 +164,7 @@ function draw() {
     ctx.beginPath();ctx.arc(x,y,id===roadEditor.selected?6:3,0,7);ctx.fill();
   });
 
-  // место по Wi-Fi (±десятки метров) и насколько робот уверен в своём месте
   const road = (LAST && LAST.telemetry.road) || {};
-  if (road.wifi) {
-    const [wx, wy] = toScreen(v, road.wifi[0], road.wifi[1]);
-    ctx.strokeStyle = 'rgba(140,70,230,.9)'; ctx.fillStyle = 'rgba(140,70,230,.10)';
-    ctx.lineWidth = 2; ctx.setLineDash([8, 5]);
-    ctx.beginPath(); ctx.arc(wx, wy, Math.max(8, road.wifi[2] * v.s), 0, 7); ctx.fill(); ctx.stroke();
-    ctx.setLineDash([]);
-  }
   if (poseKnown() && road.sigma_xy > 2) {
     const [px, py] = toScreen(v, LAST.telemetry.pose.x, LAST.telemetry.pose.y);
     ctx.fillStyle = 'rgba(55,200,164,.15)';
@@ -284,9 +222,8 @@ function draw() {
     ctx.beginPath(); ctx.arc(x, y, 17, 0, 7); ctx.stroke();
   }
 
-  $('mapHint').textContent =
-    (meta ? meta.label + ' · колесо — масштаб, Shift + перетаскивание — сдвиг' : '') + (img && img.complete && img.naturalWidth ? '' : ' · сетка 5 м')
-    + (LAST && !poseKnown() ? ' · где робот — неизвестно: «Робот здесь»' : '');
+  $('mapHint').textContent = 'Сетка 100 × 100 м · шаг 5 м · колесо — масштаб, перетаскивание — сдвиг'
+    + (LAST && !poseKnown() ? ' · укажите «Робот здесь»' : '');
 }
 
 function render(msg) {
@@ -353,7 +290,7 @@ function render(msg) {
   setGauge('bComp', t.battery.compute);
 
   $('chipSpeed').textContent = t.speed.toFixed(1).replace('.', ',') + ' м/с';
-  $('chipWhere').textContent = t.indoor ? 'помещение' : 'улица';
+  $('chipWhere').textContent = 'локальные координаты';
   $('chipEstop').classList.toggle('hidden', !t.estop);
   $('chipTamper').classList.toggle('hidden', !(t.lock && t.lock.tamper));
   $('chipBrain').classList.toggle('hidden', !!t.brain_link);
@@ -365,9 +302,8 @@ function render(msg) {
   $('chipZone').classList.toggle('ok', !!ble.near);
   renderEvents(msg.events);
   const r = t.road || {};
-  const gnss = { ok: 'GPS ок', suspect: 'GPS не верю (глушение?)', none: 'GPS нет' }[r.gnss] || '';
   const lane = r.lane ? `разметка ${r.lane === 2 ? '2 линии' : '1 линия'}` : 'разметки нет';
-  $('coord').textContent = `${gnss} · ${lane} · ` +
+  $('coord').textContent = `${lane} · ` +
     `x ${t.pose.x.toFixed(1)}  y ${t.pose.y.toFixed(1)}`.replace(/\./g, ',');
 
   updateActions(o);
@@ -582,15 +518,11 @@ $('btnAccess').onclick = async () => {
   } catch (e) { toast(e.message, true); }
 };
 
-document.querySelectorAll('#mapSeg button').forEach(b => {
-  b.onclick = () => {
-    document.querySelectorAll('#mapSeg button').forEach(x => x.classList.remove('on'));
-    b.classList.add('on');
-    mapMode = b.dataset.map;
-    loadImage(activeMapKey());
-    draw();
-  };
-});
+$('btnResetGrid').onclick = () => {
+  mapZoom = 1; mapPan = {x:0,y:0};
+  roadView = roadEditor ? Grid100.view(CFG.grid, cv.clientWidth, cv.clientHeight) : null;
+  draw();
+};
 
 document.querySelectorAll('.lk input').forEach(i => {
   i.onclick = () => { i.select(); document.execCommand('copy'); toast('Ссылка скопирована'); };
@@ -625,16 +557,6 @@ async function boot() {
   roadStatus();
   fillSelects();
   renderPointList();
-  loadImage('map'); loadImage('sat');
-  // карты ещё нет (нет интернета или места робота) — спрашиваем снова, пока не появится
-  const retry = setInterval(async () => {
-    if (Object.keys(CFG.maps || {}).length) return clearInterval(retry);
-    try {
-      const current=await api('/api/config');CFG.maps=current.maps;
-      if(!roadEditor){CFG.roads=current.roads;CFG.roads_revision=current.roads_revision;roadStatus();}
-      loadImage('map');loadImage('sat');draw();
-    } catch (e) {}
-  }, 15000);
   fitCanvas(); draw();
   connect();
 }
@@ -645,7 +567,7 @@ boot();
 
 function roadStatus() {
   const r=CFG.roads||{},n=(r.edges||[]).length+(r.directed_edges||[]).length;
-  $('roadsStatus').textContent=n ? `${n} участков сохранено. Точки должны быть рядом с дорогой (до ${r.snap_m||3} м).` : 'Дорог пока нет: загрузите их или отметьте по карте. Прямой маршрут отключён.';
+  $('roadsStatus').textContent=n ? `${n} участков сохранено. Точки должны быть рядом с дорогой (до ${r.snap_m||3} м).` : 'Дорог пока нет: отметьте их на сетке. Прямой маршрут отключён.';
 }
 function endRoadEdit(){roadEditor=null;roadView=null;roadDelete=false;$('roadTools').classList.add('hidden');$('btnRoadDelete').classList.remove('on');draw();}
 $('btnEditRoads').onclick=()=>{
@@ -664,18 +586,6 @@ $('btnSaveRoads').onclick=async()=>{
   try{const r=await api('/api/roads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({roads:roadEditor.data,revision:roadRevision})});
     Object.assign(CFG,r);endRoadEdit();previewPlan=null;roadStatus();toast('Дороги сохранены');
   }catch(e){toast(e.message,true);}
-};
-$('btnImportRoads').onclick=async()=>{
-  if(roadEditor){toast('Сохраните или отмените правки дорог',true);return;}
-  const r=CFG.roads||{};
-  if(((r.edges||[]).length+(r.directed_edges||[]).length)>0 && !confirm('Заменить дороги данными OpenStreetMap? Предыдущая версия сохранится в резервной копии.'))return;
-  let origin=r.origin;
-  if(!origin){const value=prompt('Центр карты: широта, долгота (например 53.5078, 49.4204). Возьмите координаты нужного места на Яндекс Картах.');if(value===null)return;origin=value.trim().split(/[,;\s]+/).map(Number);}
-  const value=prompt('Радиус загрузки дорог в метрах (100–1500)', '600');if(value===null)return;
-  $('btnImportRoads').disabled=true;$('roadsStatus').textContent='Загружаю дороги… Нужен интернет на Pi.';
-  try{const result=await api('/api/roads/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:CFG.roads_revision,origin,radius_m:Number(value)})});
-    Object.assign(CFG,result);previewPlan=null;CFG.maps=(await api('/api/config')).maps;delete images.map;delete images.sat;loadImage('map');loadImage('sat');draw();toast('Дороги загружены и сохранены на Pi');
-  }catch(e){toast(e.message,true);}finally{$('btnImportRoads').disabled=false;roadStatus();}
 };
 $('btnPreview').onclick=async()=>{
   if(roadEditor || localPoints){toast('Сначала сохраните дороги и точки',true);return;}

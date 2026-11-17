@@ -2,7 +2,6 @@
 import copy
 import json
 import math
-import random
 import threading
 import time
 from collections import deque
@@ -20,8 +19,6 @@ DEFAULT = {
         'compute': {'volts': None, 'percent': None},
     },
     'lock': {'closed': True, 'busy': False, 'tamper': False},
-    'gnss': {'fix': False, 'lat': None, 'lon': None},
-    'wifi_geo': None,  # (широта, долгота, точность м) по Wi-Fi
     'imu_status': '',
     'lidar_odom': {},
     'estop': False,
@@ -29,17 +26,9 @@ DEFAULT = {
     'obstacle': '',
     'plan': [],
     'road': {},
-    'gnss_status': '',
     'lane': '',
     'ble': {'zone': None, 'rssi': None, 'near': False, 'zones': {}},
 }
-
-
-def _nmea(body):
-    cs = 0
-    for ch in body:
-        cs ^= ord(ch)
-    return f'${body}*{cs:02X}'
 
 
 def _mock_frame(tick, speed):
@@ -59,22 +48,6 @@ def _mock_frame(tick, speed):
     cv2.putText(img, f'MOCK lane 2 v {speed:.2f}', (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     ok, buf = cv2.imencode('.jpg', img)
     return buf.tobytes() if ok else None
-
-
-MOCK_GEO = (52.90114, 35.98632)  # «Созвездие Орла»: там стоит робот
-
-
-def _mock_nmea(x, y, yaw, speed):
-    """Имитация строк BN-880 для отладочной консоли: позиция вокруг MOCK_GEO."""
-    lat = MOCK_GEO[0] + y / 111320.0
-    lon = MOCK_GEO[1] + x / (111320.0 * math.cos(math.radians(MOCK_GEO[0])))
-    t = time.strftime('%H%M%S.00', time.gmtime())
-    la = f'{int(lat):02d}{(lat % 1) * 60:07.4f}'
-    lo = f'{int(lon):03d}{(lon % 1) * 60:07.4f}'
-    course = (90 - math.degrees(yaw)) % 360
-    return [_nmea(f'GNGGA,{t},{la},N,{lo},E,1,09,1.1,92.4,M,14.2,M,,'),
-            _nmea(f'GNRMC,{t},A,{la},N,{lo},E,{speed / 0.514444:.2f},{course:.1f},'
-                  f'{time.strftime("%d%m%y", time.gmtime())},,,A')]
 
 
 class RosLink:
@@ -165,7 +138,7 @@ class RosLink:
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from nav_msgs.msg import Odometry, Path
         from rclpy.qos import qos_profile_sensor_data
-        from sensor_msgs.msg import BatteryState, CompressedImage, NavSatFix, NavSatStatus
+        from sensor_msgs.msg import BatteryState, CompressedImage
         from std_msgs.msg import Bool, Empty, String
         from std_srvs.srv import Trigger
 
@@ -190,14 +163,6 @@ class RosLink:
                 pct = max(0.0, min(100.0, (volts - lo) / (hi - lo) * 100.0))
             return {'volts': round(volts, 2) if volts else None,
                     'percent': round(pct) if pct is not None else None}
-
-        def on_fix(msg: NavSatFix):
-            has_fix = msg.status.status >= NavSatStatus.STATUS_FIX
-            with self._lock:
-                self._state['gnss'] = {'fix': has_fix,
-                                       'lat': msg.latitude if has_fix else None,
-                                       'lon': msg.longitude if has_fix else None}
-                self._state['indoor'] = not has_fix
 
         def on_mission(msg: String):
             try:
@@ -225,7 +190,6 @@ class RosLink:
         sub(BatteryState, '/drive/battery',
             lambda m: self._set(['battery', 'drive'], batt(m, 11.2, 14.6)), 5)
         sub(BatteryState, '/power/computer', lambda m: self._set(['battery', 'compute'], batt(m)), 5)
-        sub(NavSatFix, '/gnss/fix', on_fix, 5)
         sub(Bool, '/lock/closed', lambda m: self._set(['lock', 'closed'], bool(m.data)), 5)
         sub(Bool, '/lock/busy', lambda m: self._set(['lock', 'busy'], bool(m.data)), 5)
         sub(Bool, '/lock/tamper', lambda m: self._set(['lock', 'tamper'], bool(m.data)), 5)
@@ -251,13 +215,9 @@ class RosLink:
         sub(String, '/road/status', on_road, 5)
         # кадр — «лучшее усилие», глубина 1: опоздавший кадр не нужен, переотправки только тормозят
         sub(CompressedImage, '/perception/debug/compressed', lambda m: self._on_jpeg(m.data), qos_profile_sensor_data)
-        sub(String, '/gnss/nmea', lambda m: self._log(m.data, 'nmea'), 50)
-        sub(String, '/gnss/status', lambda m: self._set(['gnss_status'], m.data), 5)
         sub(String, '/wifi/status', lambda m: self._log(m.data, 'wifi'), 5)
         sub(String, '/lidar_odom/status', self._on_lidar_odom, 5)
         sub(String, '/imu/status', lambda m: self._set(['imu_status'], m.data), 5)
-        sub(NavSatFix, '/wifi/fix', lambda m: self._set(
-            ['wifi_geo'], (m.latitude, m.longitude, m.position_covariance[0] ** 0.5)), 5)
         sub(String, '/perception/lane', lambda m: self._set(['lane'], m.data), 5)
 
         def on_zone(msg: String):
@@ -383,22 +343,15 @@ class RosLink:
                                                      'percent': round(comp)}
             tick += 1
             speed = 0.55 if st['state'] in ('TO_PICKUP', 'TO_DROP') else 0.0
-            fx, fy = x + random.gauss(0, 0.8), y + random.gauss(0, 0.8)
             with self._lock:
-                self._state['road'] = {'gnss': 'ok', 'mode': 'lane' if speed else 'idle', 'lane': 2,
-                                       'yaw_known': True, 'ready': True, 'pose': [x, y, yaw],
-                                       'fix': [round(fx, 2), round(fy, 2)], 'sigma': 2.5,
-                                       'wifi': [round(x + 6, 1), round(y - 4, 1), 25.0], 'sigma_xy': 6.0}
-                self._state['wifi_geo'] = (MOCK_GEO[0] + (y - 4) / 111320.0, MOCK_GEO[1], 25.0)
-                self._state['gnss_status'] = f'sats=9/14 snr=38дБx14 hdop=1.1 qual=1 fix=3D v={speed:.1f}'
+                self._state['road'] = {'position_source':'local', 'mode':'lane' if speed else 'idle', 'lane':2,
+                                       'manual_pose':True, 'yaw_known':True, 'ready':True,
+                                       'pose':[x,y,yaw], 'sigma_xy':1.0}
                 self._state['lane'] = '0.050 -0.0100 3.50 2' if speed else 'none'
             if tick % 2 == 0:
                 jpg = _mock_frame(tick, speed)
                 if jpg:
                     self._on_jpeg(jpg)
-            if tick % 5 == 0:
-                for line in _mock_nmea(fx, fy, yaw, speed):
-                    self._log(line, 'nmea')
             time.sleep(0.2)
 
     def server_alive(self):

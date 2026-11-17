@@ -18,7 +18,6 @@ def web(monkeypatch,tmp_path):
     for attr,name in [('ROADS_FILE','roads.json'),('POINTS_FILE','points.json'),('ORDERS_FILE','orders.json')]:
         monkeypatch.setattr(server,attr,tmp_path/name)
     monkeypatch.setattr(server,'link',RosLink(mock=True))
-    monkeypatch.setattr(server,'yandex_map',lambda layer:None)
     return TestClient(server.app)
 
 
@@ -85,23 +84,21 @@ def test_osm_geometry_intersections_and_directions():
     assert road_map.from_osm(raw,[53.,49.])['directed_edges']==[]
 
 
-def test_import_is_cached_and_does_not_overwrite_concurrent_edit(web,monkeypatch):
-    revision=web.get('/api/config').json()['roads_revision']
-    fetch=Mock(return_value=osm());monkeypatch.setattr(server,'fetch_osm',fetch)
-    r=web.post('/api/roads/import',json={'revision':revision,'origin':[53.,49.]})
-    assert r.status_code==200,r.text
-    fetch.assert_called_once()
-    assert web.post('/api/route',json={'start':[0,0],'goal':r.json()['roads']['nodes']['3']}).status_code==200
-    assert fetch.call_count==1  # routing is offline
-    assert web.post('/api/roads/import',json={'revision':revision,'origin':[53.,49.]}).status_code==409
-
-
-def test_import_failure_preserves_saved_roads(web,monkeypatch):
+def test_grid_config_and_disabled_geographic_endpoints_preserve_saved_data(web, monkeypatch):
+    import urllib.request
+    fetch = Mock(side_effect=AssertionError('Network request in local mode'))
+    monkeypatch.setattr(urllib.request, 'urlopen', fetch)
     save(web)
-    before=server.ROADS_FILE.read_bytes()
-    monkeypatch.setattr(server,'fetch_osm',Mock(side_effect=OSError('offline')))
-    r=web.post('/api/roads/import',json={'revision':web.get('/api/config').json()['roads_revision'],'origin':[53.,49.]})
-    assert r.status_code==400 and server.ROADS_FILE.read_bytes()==before
+    before = server.ROADS_FILE.read_bytes()
+    config = web.get('/api/config').json()
+    assert config['maps'] == {} and config['grid']['size_m'] == 100
+    assert config['grid']['step_m'] == 5
+    # Even a cached image from the previous installation must not be served.
+    (server.DATA_DIR/'yandex_map.png').write_bytes(b'old map')
+    assert web.get('/api/map/map.png').status_code == 410
+    assert web.post('/api/roads/import',json={'revision':config['roads_revision']}).status_code == 410
+    assert server.ROADS_FILE.read_bytes() == before
+    fetch.assert_not_called()
 
 
 def test_editor_splits_oneway_and_undoes_and_deletes(tmp_path):
@@ -119,4 +116,25 @@ e.undo();assert.equal(e.data.edges.length,0);assert.equal(e.selected,n);
 e.click(8,0,.3,true);assert.equal(e.data.directed_edges.length,1);
 e.undo();assert.equal(e.data.directed_edges.length,2);
 ''')
+    subprocess.run(['node',str(js)],check=True)
+
+
+def test_grid_is_exactly_100m_and_preserves_metric_coordinates(tmp_path):
+    grid = Path(__file__).resolve().parents[1]/'atsd_web/static/grid100.js'
+    js = tmp_path/'grid.cjs'
+    js.write_text('const Grid=require('+json.dumps(str(grid))+');\n'+"""
+const assert=require('node:assert/strict');
+for (const center of [[0,0],[-95,15],[500,-250]]) {
+  const b=Grid.bounds({center});
+  assert.equal(b.x1-b.x0,100); assert.equal(b.y1-b.y0,100);
+  for (const [w,h] of [[400,700],[900,450]]) {
+    const v=Grid.view({center},w,h);
+    assert.equal(v.ox+center[0]*v.s,w/2);
+    assert.equal(v.oy-center[1]*v.s,h/2);
+    assert.ok(100*v.s <= Math.min(w,h));
+    const px=v.ox+(center[0]+12)*v.s;
+    assert.ok(Math.abs((px-v.ox)/v.s-(center[0]+12))<1e-9);
+  }
+}
+""")
     subprocess.run(['node',str(js)],check=True)

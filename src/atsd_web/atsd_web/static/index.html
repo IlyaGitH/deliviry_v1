@@ -25,11 +25,8 @@
 
   <section class="panel map-panel">
     <div class="panel-head">
-      <h2>Карта</h2>
-      <div class="seg" id="mapSeg">
-        <button data-map="map" class="on">Схема</button>
-        <button data-map="sat">Спутник</button>
-      </div>
+      <h2>Полигон · локальные метры</h2>
+      <button class="btn ghost small" id="btnResetGrid">Вся сетка</button>
     </div>
     <div class="map-wrap">
       <canvas id="map"></canvas>
@@ -40,7 +37,6 @@
       <span><i class="dot point"></i>точка</span>
       <span><i class="dot target"></i>цель</span>
       <span><i class="line route"></i>маршрут</span>
-      <span><i class="dot" style="background:#8c46e6"></i>Wi-Fi</span>
       <span id="coord" class="mono"></span>
     </div>
   </section>
@@ -135,14 +131,12 @@
   </section>
 
   <section class="panel admin-only" id="roadsPanel">
-    <div class="panel-head"><h2>Дороги на карте</h2></div>
+    <div class="panel-head"><h2>Дороги на сетке</h2></div>
     <p class="hint" id="roadsStatus">Дороги ещё не загружены.</p>
     <div class="admin-row">
-      <button class="btn ghost small" id="btnImportRoads">Загрузить дороги OSM</button>
       <button class="btn ghost small" id="btnEditRoads">Отметить дороги</button>
     </div>
-    <p class="hint">Дороги сохраняются на Pi и работают без интернета. Если участка нет в OSM,
-      отметьте повороты по карте Яндекса. На перекрёстке нажмите на существующую линию, чтобы соединить дороги.</p>
+    <p class="hint">Дороги сохраняются на Pi и работают без интернета. Отмечайте точки поворотов на сетке. На перекрёстке нажмите на существующую линию, чтобы соединить дороги.</p>
     <div class="hidden" id="roadTools">
       <div class="admin-row">
         <button class="mini" id="btnRoadNew">Новая ветка</button>
@@ -154,16 +148,16 @@
         <button class="btn ghost small" id="btnCancelRoads">Отменить правки</button>
       </div>
     </div>
-    <p class="hint"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> — источник загружаемых дорог. Подложка — Яндекс.</p>
+    <p class="hint"><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> — авторство ранее импортированных дорог.</p>
   </section>
 
   <section class="panel admin-only" id="pointsPanel">
     <div class="panel-head">
-      <h2>Точки на карте</h2>
+      <h2>Точки на сетке</h2>
       <button class="mini" id="btnHere">Робот здесь</button>
       <button class="mini" id="btnPlace">Поставить</button>
     </div>
-    <p class="hint">Нажмите «Поставить», затем ткните в карту — точка встанет туда.
+    <p class="hint">Нажмите «Поставить», затем ткните в сетку — точка встанет туда.
       «Робот здесь»: ткните, где робот стоит на самом деле, затем — куда он смотрит.</p>
     <div id="pointList" class="plist"></div>
     <button class="btn ghost" id="btnSavePoints">Сохранить расстановку</button>
@@ -173,6 +167,7 @@
 
 <div class="toast" id="toast"></div>
 <script src="/static/road_editor.js"></script>
+<script src="/static/grid100.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

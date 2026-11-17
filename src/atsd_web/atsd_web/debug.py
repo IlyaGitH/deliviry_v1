@@ -1,4 +1,4 @@
-# /debug/ под общим HTTPS-шлюзом: камера, консоль GPS, карта. Только администратор.
+# /debug/ под общим HTTPS-шлюзом: камера, консоль событий, локальная сетка. Только администратор.
 import asyncio
 import time
 from pathlib import Path
@@ -23,8 +23,8 @@ def attach(link, static_dir: Path, config_fn, map_fn, security_fn=lambda: None):
 def index():
     static = _ctx['static']
     html = (static / 'debug.html').read_text(encoding='utf-8')
-    js = static / 'debug.js'
-    html = html.replace('/static/debug.js"', f'/static/debug.js?v={int(js.stat().st_mtime)}"')
+    for name in ('debug.js', 'grid100.js'):
+        html = html.replace(f'/static/{name}"', f'/static/{name}?v={int((static/name).stat().st_mtime)}"')
     return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
 
 
@@ -77,7 +77,7 @@ async def ws(sock: WebSocket):
                 'ts': time.time(),
                 'connected': t['connected'], 'brain_link': t['brain_link'],
                 'pose': t['pose'], 'speed': t['speed'], 'road': t['road'], 'plan': t['plan'],
-                'gnss': t['gnss'], 'gnss_status': t['gnss_status'], 'lane': t['lane'],
+                'lane': t['lane'],
                 'imu_status': t.get('imu_status', ''),
                 'lidar_odom': t.get('lidar_odom', {}),
                 'obstacle': t['obstacle'], 'state': m.get('state'), 'pause': m.get('pause', []),

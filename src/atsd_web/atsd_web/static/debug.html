@@ -47,20 +47,17 @@
     <div class="chips" id="chips"></div>
   </div>
   <div class="card">
-    <h2>Карта: GPS и оценка положения</h2>
+    <h2>Локальная сетка 100 × 100 м</h2>
     <canvas id="dmap"></canvas>
     <div class="legend">
-      <span><i style="background:#e0a33a"></i>сырой GPS (кружок — точность)</span>
-      <span><i style="background:#37c8a4"></i>оценка (GPS + колёса + разметка)</span>
+      <span><i style="background:#37c8a4"></i>позиция (колёса + IMU + разметка)</span>
       <span><i style="background:#4b9dff"></i>маршрут</span>
-      <span><i style="background:#b278ff"></i>место по Wi-Fi</span>
       <span><i style="background:#56656f"></i>дороги</span>
     </div>
   </div>
   <div class="card full">
-    <h2>Консоль GPS</h2>
+    <h2>Консоль робота</h2>
     <div class="tools">
-      <label><input type="checkbox" id="nmea" checked> NMEA</label>
       <label><input type="checkbox" id="auto" checked> прокрутка</label>
       <button id="pause">Пауза</button>
       <button id="clear">Очистить</button>
@@ -68,6 +65,7 @@
     <div id="con"></div>
   </div>
 </div>
+<script src="/static/grid100.js"></script>
 <script src="/static/debug.js"></script>
 </body>
 </html>

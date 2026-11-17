@@ -2,20 +2,18 @@
 import asyncio
 import json
 import hashlib
-import urllib.parse
 import math
 import os
 import secrets
 import threading
 import time
-import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -42,81 +40,6 @@ DEFAULT_POINTS = [
 ]
 
 _store_lock = threading.RLock()
-
-
-# Подложка — карта Яндекса вокруг origin графа дорог (начало координат карты робота).
-# Static API 1.x отдаёт картинку без ключа; одна картинка 650×450, на z=17 это ~470×325 м
-MAP_LAYERS = {'map': ('map', 'png', 'Схема'), 'sat': ('sat', 'jpg', 'Спутник')}
-MAP_ZOOM = int(os.environ.get('ATSD_MAP_ZOOM', '17'))
-MAP_W, MAP_H = 650, 450
-_map_fail = {}    # слой -> когда не удалось скачать: повтор не чаще раза в минуту
-_map_busy = set()  # слои, которые сейчас качаются
-
-
-def map_origin():
-    """Origin из roads.json. Нет — берём текущее место робота (GPS, иначе Wi-Fi) и записываем:
-    с ним nav_node начнёт переводить GPS и Wi-Fi в метры карты, road_mark продолжит тот же граф."""
-    roads = _load(ROADS_FILE, {})
-    if roads.get('origin'):
-        return tuple(roads['origin'])
-    t = link.snapshot() if link else {}
-    g, w = t.get('gnss') or {}, t.get('wifi_geo')
-    here = (g['lat'], g['lon']) if g.get('fix') else (w[0], w[1]) if w else None
-    if here is None:
-        return None
-    with _store_lock:
-        roads = _load(ROADS_FILE, {})
-        if roads.get('origin'):
-            return tuple(roads['origin'])
-        roads.setdefault('nodes', {})
-        roads.setdefault('edges', [])
-        roads['origin'] = [round(here[0], 7), round(here[1], 7)]
-        _save(ROADS_FILE, roads)
-    print(f'Начало координат карты: {roads["origin"]}')
-    return tuple(roads['origin'])
-
-
-def _fetch_map(layer, want, img, meta_file):
-    """Скачать подложку в фоне: страница не ждёт интернета (без него один DNS — до десятков секунд)."""
-    name, ext, label = MAP_LAYERS[layer]
-    url = (f'https://static-maps.yandex.ru/1.x/?ll={want[1]:.7f},{want[0]:.7f}'
-           f'&z={want[2]}&size={MAP_W},{MAP_H}&l={name}&lang=ru_RU')
-    try:
-        with urllib.request.urlopen(url, timeout=10) as r:
-            data = r.read()
-        if not data.startswith((b'\x89PNG', b'\xff\xd8')):
-            raise ValueError('не картинка')
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        img.write_bytes(data)
-        _save(meta_file, want)
-        print(f'Карта Яндекса ({label}) скачана')
-    except (OSError, ValueError) as e:
-        _map_fail[layer] = time.time()
-        print(f'Карта Яндекса ({label}) не скачалась: {e}')
-    finally:
-        _map_busy.discard(layer)
-
-
-def yandex_map(layer):
-    """{'image', 'meters_per_pixel', 'origin' — левый нижний угол в метрах, 'label'} или None.
-    Нет картинки — запускает скачивание в фоне и сразу отвечает None (страница переспросит)."""
-    origin = map_origin()
-    if origin is None:
-        return None
-    name, ext, label = MAP_LAYERS[layer]
-    img = DATA_DIR / f'yandex_{layer}.{ext}'
-    meta_file = DATA_DIR / f'yandex_{layer}.json'
-    want = [origin[0], origin[1], MAP_ZOOM]
-    if _load(meta_file, None) != want or not img.exists():
-        if os.environ.get('ATSD_MAP_DOWNLOADS', '0') == '1' and layer not in _map_busy and time.time() - _map_fail.get(layer, 0) > 60:
-            _map_busy.add(layer)
-            threading.Thread(target=_fetch_map, args=(layer, want, img, meta_file), daemon=True).start()
-        return None
-    # проекция Яндекса — Меркатор на эллипсоиде: метров в пикселе на широте origin
-    lat = math.radians(origin[0])
-    mpp = 2 * math.pi * 6378137.0 / (256 * 2 ** MAP_ZOOM) * math.cos(lat) / math.sqrt(1 - 0.00669438 * math.sin(lat) ** 2)
-    return {'image': f'/api/map/{layer}.{ext}?v={int(img.stat().st_mtime)}', 'meters_per_pixel': mpp,
-            'origin': [-MAP_W * mpp / 2, -MAP_H * mpp / 2], 'label': label}
 
 
 def _load(path, fallback):
@@ -413,16 +336,18 @@ def logout(request: Request):
 def index():
     # Метка версии в ссылках: после обновления браузер не возьмёт старые app.js и style.css из кэша
     html = (STATIC / 'index.html').read_text(encoding='utf-8')
-    for name in ('app.js', 'road_editor.js', 'style.css'):
+    for name in ('app.js', 'road_editor.js', 'grid100.js', 'style.css'):
         html = html.replace(f'/static/{name}"', f'/static/{name}?v={int((STATIC / name).stat().st_mtime)}"')
     return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
 
 
 @app.get('/api/config')
 def api_config():
-    maps = {k: m for k in MAP_LAYERS if (m := yandex_map(k))}
+    pts = points()
+    valid = [(p['x'], p['y']) for p in pts if all(isinstance(p.get(k), (int, float)) and math.isfinite(p[k]) for k in ('x','y'))]
+    center = [round((min(v[i] for v in valid)+max(v[i] for v in valid))/10)*5 for i in (0,1)] if valid else [0,0]
     roads = _load(ROADS_FILE, {})
-    return {'points': points(), 'maps': maps,
+    return {'points': pts, 'maps': {}, 'grid': {'size_m':100, 'step_m':5, 'center':center},
             'roads': roads, 'roads_revision': road_revision(roads)}
 
 
@@ -459,37 +384,9 @@ def api_roads(body: RoadsIn):
     return save_roads(body.roads,body.revision)
 
 
-def fetch_osm(origin, radius):
-    lat,lon=origin
-    dy=math.degrees(radius/6378137.)
-    dx=dy/math.cos(math.radians(lat))
-    bbox=f'{lat-dy:.7f},{lon-dx:.7f},{lat+dy:.7f},{lon+dx:.7f}'
-    query=f'[out:json][timeout:20];way["highway"]({bbox});(._;>;);out body;'
-    req=urllib.request.Request('https://overpass-api.de/api/interpreter',
-        data=urllib.parse.urlencode({'data':query}).encode(),headers={'User-Agent':'ATSD-road-map/1.0'})
-    with urllib.request.urlopen(req,timeout=25) as response:
-        payload=response.read(8_000_001)
-    if len(payload)>8_000_000: raise ValueError('Карта слишком большая: уменьшите радиус')
-    return json.loads(payload)
-
-
 @app.post('/api/roads/import')
 def api_import_roads(body: RoadImportIn):
-    road_changes_allowed()
-    current=_load(ROADS_FILE,{})
-    if road_revision(current)!=body.revision:
-        raise HTTPException(409,'Карта изменилась. Обновите страницу перед загрузкой')
-    origin=current.get('origin') or body.origin
-    try:
-        road_map.validate({'origin':origin})
-        if origin is None: raise ValueError('Укажите центр карты: широту и долготу')
-        if not math.isfinite(body.radius_m) or not 100<=body.radius_m<=1500:
-            raise ValueError('Радиус загрузки должен быть от 100 до 1500 м')
-        data=road_map.from_osm(fetch_osm(origin,body.radius_m),origin)
-    except (OSError,ValueError,TypeError,KeyError) as e:
-        raise HTTPException(400,'Не удалось загрузить дороги: '+str(e))
-    # Recheck revision/mission after network I/O; cannot overwrite a concurrent edit.
-    return save_roads(data,body.revision)
+    raise HTTPException(410, 'Географический импорт отключён. Отметьте дороги на локальной сетке.')
 
 
 def plan_road(start,goal):
@@ -513,12 +410,7 @@ def api_route(body: RouteIn):
 
 @app.get('/api/map/{layer}.{ext}')
 def api_map_image(layer: str, ext: str):
-    if layer not in MAP_LAYERS or MAP_LAYERS[layer][1] != ext:
-        raise HTTPException(404, 'Карты нет')
-    img = DATA_DIR / f'yandex_{layer}.{ext}'
-    if not img.exists():
-        raise HTTPException(404, 'Карты нет')
-    return FileResponse(str(img), media_type='image/png' if ext == 'png' else 'image/jpeg')
+    raise HTTPException(410, 'Географическая карта отключена. Используется сетка 100 × 100 м.')
 
 
 @app.post('/api/points')
@@ -566,7 +458,7 @@ def api_create(body: OrderIn):
             raise HTTPException(409, 'Робот выполняет другой рейс')
         if (tele.get('road') or {}).get('ready') is False:
             # иначе nav_node через 20 с отменит рейс с no_position
-            raise HTTPException(409, 'Робот не знает, где он: GPS нет. Нажмите «Робот здесь» и покажите на карте, '
+            raise HTTPException(409, 'Укажите начальную позицию: нажмите «Робот здесь» и покажите на сетке, '
                                      'где он стоит и куда смотрит')
 
         pts = {p['id']: (p['x'], p['y']) for p in points()}
@@ -788,8 +680,6 @@ def main(args=None):
     if security is not None:
         link.security_audit = security.record_event
     link.start()
-    if os.environ.get('ATSD_MAP_DOWNLOADS', '0') == '1':
-        threading.Timer(10.0, lambda: [yandex_map(k) for k in MAP_LAYERS]).start()  # подложка заранее, в фоне
     print(f'АТСД-1М · имитация: http://127.0.0.1:{port}' if mock else
           'АТСД-1М · защищённый веб: Unix-сокет /run/atsd-web/http.sock, HTTPS через шлюз')
     from atsd_web.debug import attach, debug_app

@@ -1,5 +1,5 @@
 [Unit]
-Description=ATSD | Лидар, GNSS, гейдж, BLE-метки
+Description=ATSD | Лидар, IMU, гейдж, BLE-метки
 After=network-online.target bluetooth.service
 PartOf=atsd.target
 

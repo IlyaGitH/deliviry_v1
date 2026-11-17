@@ -5,7 +5,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # Езда по дороге: разметка + GPS + колёса. Лидар — только препятствия (obstacle_node -> Brain)
+    # Езда по дороге: ручная поза + разметка + IMU + колёса. Лидар — только препятствия (obstacle_node -> Brain)
     cfg = os.path.join(get_package_share_directory('atsd_bringup'), 'config', 'atsd.yaml')
     return LaunchDescription([
         Node(package='atsd_drive', executable='nav_node', name='nav_node', parameters=[cfg],

@@ -12,7 +12,7 @@ def generate_launch_description():
                               description='Телеметрия из имитатора, без робота'),
         DeclareLaunchArgument('port', default_value='8080'),
         DeclareLaunchArgument('debug_port', default_value='8090',
-                              description='Отладочная страница: камера, GPS, карта; 0 — выключить'),
+                              description='Устаревший параметр; отладка теперь доступна по /debug/ через HTTPS'),
         Node(package='atsd_web', executable='web_node', name='web_node',
              parameters=[{'mock': mock, 'port': port, 'debug_port': LaunchConfiguration('debug_port')}],
              output='screen', respawn=True, respawn_delay=3.0),

@@ -259,7 +259,6 @@ if [[ -d /opt/ros/${ROS_DISTRO_NAME} ]]; then
            atsd_actuators/lib/atsd_actuators/light_node \
            atsd_actuators/lib/atsd_actuators/lock_node \
            atsd_sensors/lib/atsd_sensors/lidar_node \
-           atsd_sensors/lib/atsd_sensors/gnss_node \
            atsd_sensors/lib/atsd_sensors/battery_node \
            atsd_sensors/lib/atsd_sensors/ble_node \
            atsd_sensors/lib/atsd_sensors/wifi_node \
@@ -277,14 +276,10 @@ else
 fi
 
 log "Ставлю сервисы и правила"
+bash "${SRC_DIR}/atsd_bringup/scripts/remove_lock_cpu.sh"
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" "${ATSD_HOME}/run.sh"
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/wifi.sh" "${ATSD_HOME}/wifi.sh"
 install -m 755 "${WS_DIR}/src/atsd_bringup/scripts/hw_check.py" "${ATSD_HOME}/hw_check.py"
-# Root-owned helper must not execute from the atsd-writable ROS workspace.
-install -d -o root -g root -m 755 /usr/local/libexec
-install -o root -g root -m 755 "${WS_DIR}/src/atsd_bringup/systemd/lock-power.py" /usr/local/libexec/atsd-lock-power.py
-visudo -cf "${WS_DIR}/src/atsd_bringup/sudoers/atsd-lock-power"
-install -o root -g root -m 440 "${WS_DIR}/src/atsd_bringup/sudoers/atsd-lock-power" /etc/sudoers.d/atsd-lock-power
 install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/udev/99-atsd.rules" /etc/udev/rules.d/

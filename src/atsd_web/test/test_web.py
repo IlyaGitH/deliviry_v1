@@ -130,19 +130,16 @@ def test_latest_manual_pose_is_delivered_once_when_nav_appears(web):
     assert link._pub_pose.publish.call_count == 1
 
 
-def test_offline_yandex_does_not_start_download_and_serves_cached_map(monkeypatch, tmp_path):
-    monkeypatch.delenv('ATSD_MAP_DOWNLOADS', raising=False)
-    monkeypatch.setattr(server, 'DATA_DIR', tmp_path)
-    monkeypatch.setattr(server, 'map_origin', lambda: (55.,37.))
-    def forbidden(*args, **kwargs):
-        raise AssertionError('Offline mode attempted background download')
-    monkeypatch.setattr(server.threading, 'Thread', forbidden)
-    layer = next(iter(server.MAP_LAYERS))
-    assert server.yandex_map(layer) is None
-    _, ext, _ = server.MAP_LAYERS[layer]
-    (tmp_path / f'yandex_{layer}.{ext}').write_bytes(b'cached image')
-    server._save(tmp_path / f'yandex_{layer}.json', [55.,37.,server.MAP_ZOOM])
-    assert server.yandex_map(layer)['image'].startswith('/api/map/')
+def test_old_download_environment_cannot_enable_geographic_map(web, monkeypatch):
+    import urllib.request
+    from unittest.mock import Mock
+    client, _ = web
+    monkeypatch.setenv('ATSD_MAP_DOWNLOADS', '1')
+    download = Mock(side_effect=AssertionError('Geographic request'))
+    monkeypatch.setattr(urllib.request, 'urlopen', download)
+    assert client.get('/api/config').json()['maps'] == {}
+    assert client.get('/api/map/map.png').status_code == 410
+    download.assert_not_called()
 
 
 def test_lidar_odometry_diagnostic_does_not_remain_valid_after_publisher_loss(monkeypatch):
@@ -158,7 +155,7 @@ def test_lidar_odometry_diagnostic_does_not_remain_valid_after_publisher_loss(mo
     assert not result['valid'] and not result['slip_suspected'] and '_received' not in result
 
 
-def test_unlock_waits_for_cpu_preparation(monkeypatch):
+def test_unlock_waits_for_light_reservation_and_gpio(monkeypatch):
     from types import SimpleNamespace as NS
     from atsd_web import ros_link
     clock = [0.0]

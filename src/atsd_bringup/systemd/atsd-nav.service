@@ -1,5 +1,5 @@
 [Unit]
-Description=ATSD | Езда по дороге: разметка, GPS, колёса
+Description=ATSD | Езда по дороге: локальная сетка, разметка, колёса
 After=network-online.target atsd-sensors.service atsd-drive.service
 PartOf=atsd.target
 
