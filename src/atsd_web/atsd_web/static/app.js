@@ -1,6 +1,7 @@
 const qs = new URLSearchParams(location.search);
-const ROLE = qs.get('role') || 'admin';
-const ORDER_ID = qs.get('order') || null;
+let ROLE = 'admin';
+let SECURE = false;
+let ORDER_ID = null;
 
 const $ = (id) => document.getElementById(id);
 const cv = $('map'), ctx = cv.getContext('2d');
@@ -19,6 +20,10 @@ let mapPan = {x:0,y:0};
 const images = {};
 
 const EVENT_RU = {
+  SECURITY_REAR_INTRUSION: 'Тревога: объект в задней части корпуса; движение не изменено',
+  LOCK_PULSE: 'Подан импульс открытия замка',
+  ORDER_SERVER_LOST: 'Сервер заказов недоступен — пауза привода',
+  ORDER_SERVER_OK: 'Сервер заказов на связи',
   MISSION_START: 'Рейс начат', CARGO_LOADED: 'Груз загружен, выезд', CARGO_UNLOADED: 'Груз выдан',
   ARRIVED_PICKUP: 'Прибыл на погрузку', ARRIVED_DROP: 'Прибыл на выдачу', DELIVERED: 'Доставка завершена',
   STOP_SIGN: 'Распознан знак «Стоп»', STOP_SIGN_HOLD: 'Полная остановка у знака «Стоп»',
@@ -40,7 +45,7 @@ const EVENT_RU = {
 const POINT_NAME = (id) => ((CFG.points || []).find(p => p.id === id) || {}).name || id;
 EVENT_RU.POSE_SET = 'Положение робота задано вручную';
 const EVENT_SKIP = new Set(['STATE', 'IGNORED_C', 'IGNORED_U', 'GYRO_CALIBRATING']);
-const EVENT_WARN = new Set(['FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
+const EVENT_WARN = new Set(['ORDER_SERVER_LOST','SECURITY_REAR_INTRUSION','FAULT', 'STALL', 'BUMPER', 'LINK_LOST', 'GYRO_FAULT', 'MOTOR_MISSING',
   'MOTOR_HOT', 'BATT_LOW', 'ESTOP', 'LOCK_TAMPER', 'REJECT', 'RECOVERY', 'NAV_FAILED',
   'ZONE_MISMATCH', 'ZONE_UNCONFIRMED', 'ZONE_UNCONFIRMED_UNLOCK', 'GYRO_SIGN_FLIPPED']);
 const EVENT_GOOD = new Set(['ARRIVED_PICKUP', 'ARRIVED_DROP', 'DELIVERED', 'OBSTACLE_CLEAR', 'GREEN_GO',
@@ -87,6 +92,17 @@ function fmtEta(sec) {
 }
 
 async function api(path, opts) {
+  opts = {...(opts || {})};
+  if (SECURE && opts.method === 'POST') {
+    opts.headers = {...(opts.headers || {}), 'X-ATSD-Request':'1'};
+    const body = opts.body || '';
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+    const issued = await fetch('/api/security/ticket', {method:'POST',
+      headers:{'Content-Type':'application/json','X-ATSD-Request':'1'},
+      body:JSON.stringify({target:path,body_hash:hash})});
+    if (!issued.ok) throw new Error('Сеанс завершён или действие запрещено. Войдите заново.');
+    opts.headers['X-ATSD-Ticket'] = (await issued.json()).ticket;
+  }
   const r = await fetch(path, opts);
   if (!r.ok) {
     let msg = 'Ошибка ' + r.status;
@@ -276,6 +292,17 @@ function draw() {
 function render(msg) {
   LAST = msg;
   const t = msg.telemetry, o = msg.order;
+  let securityAlert = $('securityAlert');
+  if (!securityAlert && ROLE === 'admin') {
+    securityAlert = document.createElement('p');
+    securityAlert.id = 'securityAlert';
+    securityAlert.setAttribute('role', 'alert');
+    document.querySelector('header')?.after(securityAlert);
+  }
+  if (securityAlert) {
+    securityAlert.textContent = msg.security?.audit_error || '';
+    securityAlert.className = securityAlert.textContent ? 'banner fault' : 'hidden';
+  }
 
   if (msg.points && !localPoints) CFG.points = msg.points;
 
@@ -360,6 +387,7 @@ function setGauge(prefix, b) {
 
 function updateActions(o) {
   const bu = $('btnUnlock'), bd = $('btnDone'), hint = $('actionHint');
+  $('btnAccess').classList.toggle('hidden', ROLE !== 'admin' || !o || ['delivered','cancelled'].includes(o.status));
 
   if (ROLE === 'admin') {
     $('actionPanel').classList.add('hidden');
@@ -438,7 +466,9 @@ function renderPointList() {
   (localPoints || CFG.points).forEach(p => {
     const row = document.createElement('div');
     row.className = 'prow' + (placing === p.id ? ' sel' : '');
-    row.innerHTML = `<b>${p.name}</b><span>${p.x.toFixed(1)} ; ${p.y.toFixed(1)}</span>`;
+    const name = document.createElement('b'), coords = document.createElement('span');
+    name.textContent = p.name; coords.textContent = p.x.toFixed(1) + ' ; ' + p.y.toFixed(1);
+    row.append(name, coords);
     row.onclick = () => {
       placing = placing === p.id ? null : p.id;
       $('btnPlace').classList.toggle('on', !!placing);
@@ -533,11 +563,22 @@ $('btnCreate').onclick = async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ from_id: $('selFrom').value, to_id: $('selTo').value }),
     });
-    const base = location.origin;
-    $('lkSender').value = `${base}/?role=sender&order=${o.id}&t=${o.sender_token}`;
-    $('lkReceiver').value = `${base}/?role=receiver&order=${o.id}&t=${o.receiver_token}`;
-    $('orderLinks').classList.remove('hidden');
+    showAccess(o);
     toast('Заказ создан, робот выехал');
+  } catch (e) { toast(e.message, true); }
+};
+
+function showAccess(o) {
+  const base = location.origin;
+  $('lkSender').value = `${base}/login#role=sender&order=${o.id}&token=${o.sender_token}`;
+  $('lkReceiver').value = `${base}/login#role=receiver&order=${o.id}&token=${o.receiver_token}`;
+  $('orderLinks').classList.remove('hidden');
+}
+$('btnAccess').onclick = async () => {
+  if (!LAST?.order) return;
+  try {
+    showAccess(await api(`/api/orders/${LAST.order.id}/access`, {method:'POST'}));
+    toast('Новые ссылки выданы. Старые ссылки и сеансы получателей отключены.');
   } catch (e) { toast(e.message, true); }
 };
 
@@ -567,6 +608,14 @@ function connect() {
 }
 
 async function boot() {
+  const auth = await fetch('/api/security/me');
+  if (!auth.ok) { location.replace('/login'); return; }
+  const me = await auth.json();
+  ROLE = me.role; ORDER_ID = me.order; SECURE = me.secure;
+  const logout = document.createElement('button');
+  logout.textContent = 'Выйти';
+  logout.onclick = async () => { await api('/api/security/logout',{method:'POST'}); location.replace('/login'); };
+  if (SECURE) document.querySelector('header')?.append(logout);
   if (ROLE !== 'admin') {
     document.querySelectorAll('.admin-only').forEach(e => e.classList.add('hidden'));
     $('roleLabel').textContent =

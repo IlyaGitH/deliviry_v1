@@ -3,6 +3,7 @@ import json
 import math
 import threading
 import time
+from pathlib import Path as FilePath
 
 import rclpy
 from rclpy.node import Node
@@ -50,6 +51,7 @@ class V5BridgeNode(Node):
         d('point_ids', ['kpp', 'admin', 'testing', 'depot'])
         d('require_feeds', ['obstacle'])
         d('feed_timeout_s', 1.0)
+        d('require_order_server', FilePath('/etc/atsd/security/web.json').is_file())
 
         p = lambda n: self.get_parameter(n).value
         self.port = p('port')
@@ -72,6 +74,9 @@ class V5BridgeNode(Node):
         self.feed_timeout = float(p('feed_timeout_s'))
         self.feed_seen = {'obstacle': 0.0, 'vision': 0.0}
         self.feeds_ok_prev = None
+        self.require_order_server = bool(p('require_order_server'))
+        self.server_last = 0.0
+        self.server_ok_prev = None
 
         self.ser = None
         self.ser_lock = threading.Lock()
@@ -133,6 +138,7 @@ class V5BridgeNode(Node):
         self.create_subscription(TwistStamped, 'nav/checked_cmd_vel', self.on_nav_cmd, 1)
         self.create_subscription(String, 'nav/result', self.on_nav_result, 10)
         self.create_subscription(Float32, 'nav/remain', lambda m: setattr(self, 'nav_remain', m.data), 10)
+        self.create_subscription(String, 'security/server_alive', self.on_server_alive, 1)
 
         self.create_timer(1.0 / float(p('cmd_rate_hz')), self.send_cmd_vel)
         self.create_timer(1.0 / float(p('heartbeat_hz')), self.send_heartbeat)
@@ -337,6 +343,8 @@ class V5BridgeNode(Node):
             'link': True,
             'firmware': self.firmware,
         }
+        if self.require_order_server and not self.server_healthy(time.monotonic()):
+            data['pause'].append('order_server')
         self.pub_state.publish(String(data=json.dumps(data, ensure_ascii=False)))
 
     def check_link(self):
@@ -359,10 +367,30 @@ class V5BridgeNode(Node):
                     {'state': 'UNKNOWN', 'link': False, 'pause': [], 'flags': []})))
         self.pub_link.publish(Bool(data=ok))
 
+    def on_server_alive(self, msg):
+        try:
+            stamp = float(msg.data)
+        except (ValueError, TypeError):
+            return
+        now = time.monotonic()
+        # Same-host monotonic timestamp rejects delayed messages from a backed-up queue.
+        if math.isfinite(stamp) and 0 <= now-stamp <= 1.5 and stamp > self.server_last:
+            self.server_last = stamp
+
+    def server_healthy(self, now):
+        return self.server_last > 0 and 0 <= now-self.server_last <= 3.0
+
     def send_heartbeat(self):
         now = time.monotonic()
         dead = [f for f in self.require_feeds
                 if now - self.feed_seen.get(f, 0.0) > self.feed_timeout]
+        if self.require_order_server:
+            server_ok = self.server_healthy(now)
+            if not server_ok:
+                dead.append('order_server')
+            if server_ok != self.server_ok_prev:
+                self.server_ok_prev = server_ok
+                self.pub_event.publish(String(data='ORDER_SERVER_OK' if server_ok else 'ORDER_SERVER_LOST'))
         ok = not dead
         if ok != self.feeds_ok_prev:
             self.feeds_ok_prev = ok

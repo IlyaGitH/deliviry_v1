@@ -1,0 +1,6 @@
+# Atomic replacement of our table only. Other firewall rules are untouched.
+# DDS domain 17: base 7400 + 250*17 = 11650; participant indices 0..99.
+add table inet atsd_ros
+flush table inet atsd_ros
+add chain inet atsd_ros input { type filter hook input priority -10; policy accept; }
+add rule inet atsd_ros input iifname != "lo" udp dport 11650-11899 counter drop

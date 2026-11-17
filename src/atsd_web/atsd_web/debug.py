@@ -1,5 +1,4 @@
-# Отладочная страница (порт 8090): кадр камеры с отрисовкой распознанного, консоль GPS, карта.
-# Только для настройки в локальной сети: камера видна всем, кто откроет страницу.
+# /debug/ под общим HTTPS-шлюзом: камера, консоль GPS, карта. Только администратор.
 import asyncio
 import time
 from pathlib import Path
@@ -9,14 +8,14 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
 
-debug_app = FastAPI(title='АТСД-1М · отладка', docs_url=None, redoc_url=None)
+debug_app = FastAPI(title='АТСД-1М · отладка', docs_url=None, redoc_url=None, openapi_url=None)
 debug_app.add_middleware(GZipMiddleware, minimum_size=1000)
 _ctx = {}
 
 
-def attach(link, static_dir: Path, config_fn, map_fn):
+def attach(link, static_dir: Path, config_fn, map_fn, security_fn=lambda: None):
     """link — RosLink веба, config_fn — точки, граф дорог и подложки, map_fn — картинка подложки."""
-    _ctx.update(link=link, static=static_dir, config=config_fn, map=map_fn)
+    _ctx.update(link=link, static=static_dir, config=config_fn, map=map_fn, security=security_fn)
     debug_app.mount('/static', StaticFiles(directory=str(static_dir)), name='static')
 
 
@@ -60,6 +59,14 @@ async def ws(sock: WebSocket):
     link, seq = _ctx['link'], 0
     try:
         while True:
+            security = _ctx['security']()
+            if security is not None:
+                try:
+                    if security.session(sock.headers).principal.role != 'admin':
+                        raise ValueError('admin required')
+                except Exception:
+                    await sock.close(code=4403)
+                    return
             t = link.snapshot()
             lines = link.console_since(seq)
             if lines:

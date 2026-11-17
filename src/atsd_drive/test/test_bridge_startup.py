@@ -122,3 +122,41 @@ def test_ros_logger_severity_is_constant_per_callsite(bridge_module, monkeypatch
     node.pub_event=Mock()
     for text in ('K LINK_OK','K LINK_LOST','K LINK_OK','K ESTOP'):
         node.handle_line(text)
+
+
+def test_order_server_loss_stops_brain_heartbeat_and_recovers(bridge_module, monkeypatch):
+    m = bridge_module
+    node = make_bridge(m)
+    clock = [100.]
+    monkeypatch.setattr(m.time, 'monotonic', lambda: clock[0])
+    node.send = Mock()
+    node.pub_event = Mock()
+    node.require_order_server = True
+    node.server_last = 0.
+    node.server_ok_prev = None
+    node.require_feeds = ['obstacle']
+    node.feed_timeout = 1.
+    node.feed_seen = {'obstacle':clock[0]}
+    node.feeds_ok_prev = None
+    node.last_obst_text = ''
+    node.send_heartbeat()
+    node.send.assert_not_called()  # protected installation cannot drive before web is alive
+    for value in ('nan', 'inf', '101', '95', 'bad'):
+        node.on_server_alive(m.String(data=value))
+    assert node.server_last == 0
+    node.on_server_alive(m.String(data='100'))
+    node.send_heartbeat()
+    node.send.assert_called_once_with('H\n')
+    node.send.reset_mock()
+    clock[0] = 103.1
+    node.feed_seen['obstacle'] = clock[0]
+    node.send_heartbeat()
+    node.send.assert_not_called()
+    node.on_server_alive(m.String(data='100'))  # queued old heartbeat must not revive the server
+    node.send_heartbeat()
+    node.send.assert_not_called()
+    node.on_server_alive(m.String(data='103.1'))
+    node.send_heartbeat()
+    node.send.assert_called_once_with('H\n')
+    assert [c.args[0].data for c in node.pub_event.publish.call_args_list] == [
+        'ORDER_SERVER_LOST', 'ORDER_SERVER_OK', 'ORDER_SERVER_LOST', 'ORDER_SERVER_OK']

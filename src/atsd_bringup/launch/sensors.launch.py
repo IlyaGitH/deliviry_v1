@@ -31,6 +31,10 @@ def generate_launch_description():
              output='screen', respawn=True, respawn_delay=3.0,
              condition=IfCondition(use_lidar)),
 
+        Node(package='atsd_sensors', executable='rear_guard_node',
+             name='rear_guard_node', parameters=[cfg], output='screen',
+             respawn=True, respawn_delay=3., condition=IfCondition(use_lidar)),
+
         Node(package='atsd_sensors', executable='lidar_odom_node',
              name='lidar_odom_node', parameters=[cfg],
              output='screen', respawn=True, respawn_delay=3.0, prefix='nice -n 10',

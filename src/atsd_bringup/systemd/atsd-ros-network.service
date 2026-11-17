@@ -1,0 +1,11 @@
+[Unit]
+Description=ATSD | Изоляция ROS от внешней сети
+Before=atsd-drive.service atsd-sensors.service atsd-actuators.service atsd-perception.service atsd-nav.service atsd-web.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/atsd/security/ros-network.nft
+
+[Install]
+WantedBy=atsd.target

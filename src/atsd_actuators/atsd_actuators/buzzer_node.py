@@ -46,6 +46,8 @@ class BuzzerNode(Node):
         elif not bool(p('dry_run')):
             self.get_logger().warn('gpiozero недоступен — зуммер работает вхолостую')
 
+        self.alarm_until = 0.0
+        self.requested_on = False
         self.pattern = 'off'
         self.version = 0
         self.cv = threading.Condition()
@@ -53,6 +55,8 @@ class BuzzerNode(Node):
         threading.Thread(target=self.player, daemon=True).start()
 
         self.create_subscription(String, 'buzzer/pattern', self.on_pattern, 10)
+        self.create_subscription(String, 'security/rear_intrusion', self.on_intrusion, 10)
+        self.create_timer(.05, self.refresh_output)
         self.pub_state = self.create_publisher(String, 'buzzer/state', 5)
         self.create_timer(1.0, lambda: self.pub_state.publish(String(data=self.pattern)))
         self.get_logger().info(f'Зуммер: GPIO{self.pin}, {"включён" if self.enabled else "выключен"}')
@@ -69,9 +73,19 @@ class BuzzerNode(Node):
             self.version += 1
             self.cv.notify_all()
 
-    def out(self, on: bool):
+    def on_intrusion(self, msg):
+        if msg.data == 'SECURITY_REAR_INTRUSION':
+            self.alarm_until = time.monotonic() + 2.
+            self.refresh_output()
+
+    def refresh_output(self):
         if self.dev is not None:
-            self.dev.value = bool(on and self.enabled)
+            self.dev.value = bool(self.enabled and (
+                self.requested_on or time.monotonic() < self.alarm_until))
+
+    def out(self, on: bool):
+        self.requested_on = on
+        self.refresh_output()
 
     def player(self):
         while self.running:
@@ -102,6 +116,7 @@ class BuzzerNode(Node):
 
     def destroy_node(self):
         self.running = False
+        self.alarm_until = 0.0
         with self.cv:
             self.cv.notify_all()
         self.out(False)

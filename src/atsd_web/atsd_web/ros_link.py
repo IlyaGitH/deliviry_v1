@@ -125,6 +125,9 @@ class RosLink:
             node[path[-1]] = value
 
     def _event(self, text):
+        sink = getattr(self, 'security_audit', None)
+        if sink is not None:
+            sink(text)
         with self._lock:
             self._event_seq += 1
             self._events.append({'seq': self._event_seq, 'ts': time.time(), 'text': text})
@@ -279,6 +282,7 @@ class RosLink:
         self._pub_cargo = node.create_publisher(Empty, '/mission/cargo', 5)
         self._pub_abort = node.create_publisher(Empty, '/mission/abort', 5)
         self._pub_resume = node.create_publisher(Empty, '/mission/resume', 5)
+        self._pub_server_alive = node.create_publisher(String, '/security/server_alive', 1)
         self._unlock_cli = node.create_client(Trigger, '/lock/unlock')
         self._pose_type = PoseWithCovarianceStamped
         self._pub_pose = node.create_publisher(PoseWithCovarianceStamped, '/initialpose', 5)
@@ -396,6 +400,10 @@ class RosLink:
                 for line in _mock_nmea(fx, fy, yaw, speed):
                     self._log(line, 'nmea')
             time.sleep(0.2)
+
+    def server_alive(self):
+        if not self.mock and hasattr(self, '_pub_server_alive'):
+            self._pub_server_alive.publish(self._string(data=str(time.monotonic())))
 
     def start_mission(self, from_id, to_id, points=None, routes=None):
         if self.mock:

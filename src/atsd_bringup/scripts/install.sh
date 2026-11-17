@@ -310,6 +310,7 @@ SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
 EOF
 
 udevadm control --reload-rules && udevadm trigger
+bash "${WS_DIR}/src/atsd_bringup/security/install.sh"
 systemctl daemon-reload
 mkdir -p "${ATSD_HOME}/data"
 chown -R "${ATSD_USER}:${ATSD_USER}" "${ATSD_HOME}/data"
@@ -326,7 +327,10 @@ cat <<MSG
        sudo reboot
      Робот подключится к известной сети, а если её нет минуту — поднимет
      свою: ${AP_INFO}(/etc/atsd/wifi.conf),
-     веб-интерфейс тогда на http://10.42.0.1:8080
+     веб-интерфейс тогда на https://10.42.0.1/
+     Экспортируйте сертификаты (вместо ИМЯ — ваш SSH-пользователь):
+       sudo /usr/bin/python3 -I /usr/local/libexec/atsd-security.py export ИМЯ
+     Установите сертификат на устройство по инструкции docs/security.md.
 
   2. Проверить железо без ROS (сервисы на время проверки остановить):
        sudo systemctl stop atsd.target
@@ -345,6 +349,6 @@ cat <<MSG
   5. Запустить всё:
        sudo systemctl start atsd.target
        journalctl -u atsd-drive -f
-     Веб-интерфейс: http://<адрес-пи>:8080
+     Веб-интерфейс: https://rasber.local/ ; камера: https://rasber.local/debug/
 
 MSG

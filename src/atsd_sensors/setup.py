@@ -18,6 +18,7 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
+            'rear_guard_node = atsd_sensors.rear_guard_node:main',
             'lidar_odom_node = atsd_sensors.lidar_odom_node:main',
             'lidar_node = atsd_sensors.lidar_node:main',
             'gnss_node = atsd_sensors.gnss_node:main',

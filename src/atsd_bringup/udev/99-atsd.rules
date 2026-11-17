@@ -1,7 +1,7 @@
 # АТСД-1М: /dev/v5, /dev/lidar, /dev/gnss, /dev/camera
 SUBSYSTEM=="tty", ENV{ID_BUS}=="", IMPORT{builtin}="usb_id"
-SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2888", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="v5", MODE="0666"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar", MODE="0666"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="lidar", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="2888", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="v5", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="lidar", GROUP="dialout", MODE="0660"
 KERNEL=="ttyAMA0", SYMLINK+="gnss", GROUP="dialout", MODE="0660"
 SUBSYSTEM=="video4linux", ENV{ID_BUS}=="usb", ATTR{index}=="0", SYMLINK+="camera", GROUP="video", MODE="0660"

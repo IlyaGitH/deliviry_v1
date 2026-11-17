@@ -9,3 +9,7 @@ export ROS_DOMAIN_ID=17
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export GPIOZERO_PIN_FACTORY=lgpio
 export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+if [ -f /etc/atsd/cyclonedds.xml ]; then
+  export ROS_DOMAIN_ID=17
+  export CYCLONEDDS_URI=file:///etc/atsd/cyclonedds.xml
+fi

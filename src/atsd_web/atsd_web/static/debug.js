@@ -23,7 +23,7 @@ async function camLoop() {
     if (document.hidden) { await sleep(1000); continue; }
     const started = performance.now();
     try {
-      const r = await fetch(`/frame.jpg?after=${seq}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+      const r = await fetch(`/debug/frame.jpg?after=${seq}`, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
       if (r.status !== 200) { await sleep(500); continue; }
       seq = +r.headers.get('X-Seq');
       const next = URL.createObjectURL(await r.blob());
@@ -66,7 +66,7 @@ function summary(t) {
 
 // ---------- телеметрия ----------
 function connect() {
-  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/debug/ws');
   ws.onmessage = e => {
     const t = JSON.parse(e.data);
     T = t;
@@ -96,7 +96,12 @@ function remember(arr, p) {
 }
 connect();
 
-function chip(text, cls) { return `<span class="chip ${cls || ''}">${text}</span>`; }
+function chip(text, cls) {
+  const element = document.createElement('span');
+  element.className = 'chip ' + (cls || '');
+  element.textContent = text;
+  return element.outerHTML;
+}
 function chips(t) {
   const r = t.road || {};
   const g = { manual: ['Позиция задана вручную', 'ok'], ok: ['GPS ок', 'ok'], suspect: ['GPS не верю (глушение?)', 'bad'], lost: ['GPS нет', 'warn'] }[r.gnss]

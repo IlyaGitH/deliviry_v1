@@ -10,6 +10,8 @@ id atsd >/dev/null
 for package in atsd_drive atsd_sensors atsd_perception atsd_actuators atsd_web atsd_bringup; do
   [[ -f "${SRC_DIR}/${package}/package.xml" ]] || { echo "Нет пакета ${package}"; exit 1; }
 done
+# Fetch dependencies before stopping a working robot; network failure leaves it running.
+bash "${SRC_DIR}/atsd_bringup/security/install.sh" --dependencies-only
 BACKUP_DIR=$(mktemp -d /opt/atsd/update-backup-XXXXXXXX)
 cp -a "${WS_DIR}/src" "${BACKUP_DIR}/src"
 systemctl stop atsd.target
@@ -17,6 +19,7 @@ rsync -a --delete --exclude __pycache__/ --exclude '*.pyc' "${SRC_DIR}/" "${WS_D
 chown -R atsd:atsd "${WS_DIR}"
 sudo -u atsd bash -c 'set -e; source /opt/ros/jazzy/setup.bash; cd /opt/atsd/ws; colcon build --symlink-install'
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" /opt/atsd/run.sh
+install -m 644 "${WS_DIR}/src/atsd_bringup/config/atsd-ros.sh" /etc/profile.d/atsd-ros.sh
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/wifi.sh" /opt/atsd/wifi.sh
 # Root-owned helper must not execute from the atsd-writable ROS workspace.
 install -d -o root -g root -m 755 /usr/local/libexec
@@ -27,6 +30,7 @@ install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/syste
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/udev/99-atsd.rules" /etc/udev/rules.d/
 udevadm control --reload-rules
+bash "${WS_DIR}/src/atsd_bringup/security/install.sh"
 systemctl daemon-reload
 systemctl enable NetworkManager atsd-wifi
 systemctl start atsd.target
@@ -35,4 +39,4 @@ if ! systemctl is-active --quiet atsd-wifi; then
 fi
 echo "Обновление завершено. Предыдущие исходники: ${BACKUP_DIR}/src"
 echo 'Уже работающий сервис Wi-Fi использует старый скрипт до перезагрузки Pi.'
-echo 'Для исправлений привода загрузите на VEX актуальный firmware/vex_v5/src/main.cpp из этой же версии репозитория.'
+echo 'Этот скрипт не прошивает VEX. Если его прошивка соответствует репозиторию, повторная загрузка не нужна.'

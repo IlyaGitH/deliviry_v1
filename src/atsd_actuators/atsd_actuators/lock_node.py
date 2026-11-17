@@ -192,6 +192,11 @@ class LockNode(Node):
                     self.get_logger().error(
                         f'Не удалось восстановить CPU немедленно: {e}; '
                         'служба завершит ограничение по таймеру')
+        if response.success:
+            try:
+                self.pub_event.publish(String(data='LOCK_PULSE'))
+            except Exception as exc:
+                self.get_logger().error(f'Не удалось передать событие импульса замка: {exc}')
         return response
 
     def publish_status(self):

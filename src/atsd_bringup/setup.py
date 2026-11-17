@@ -16,6 +16,8 @@ setup(
         (os.path.join('share', package_name, 'systemd'), glob('systemd/*')),
         (os.path.join('share', package_name, 'udev'), glob('udev/*')),
         (os.path.join('share', package_name, 'scripts'), glob('scripts/*')),
+        (os.path.join('share', package_name, 'security'),
+         glob('security/*.py') + glob('security/*.sh') + glob('security/*.xml') + glob('security/*.nft')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

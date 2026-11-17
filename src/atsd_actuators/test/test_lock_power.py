@@ -52,6 +52,8 @@ def rig():
     lock.get_logger = lambda: NS(info=lambda _: None, error=lambda _: None)
     lock.pub_busy = NS(publish=lambda m: setattr(light, 'lock_busy', m.data))
     lock.pub_power = NS(publish=light.on_power_reserve)
+    lock.audit_events = []
+    lock.pub_event = NS(publish=lambda m: lock.audit_events.append(m.data))
     light.pub_ready = NS(publish=lock.on_power_ready)
     def on():
         light.tick()  # regular signal commands must not restore lights
@@ -80,6 +82,7 @@ def test_lights_off_before_pulse_and_recover_after(rig):
     assert timeline[1][1] - timeline[0][1] == pytest.approx(.4)
     assert clock.now - timeline[1][1] == pytest.approx(1)
     assert not lock.busy
+    assert lock.audit_events == ['LOCK_PULSE']
     light.tick()
     assert 0 < light.head.current < .4
 
@@ -194,3 +197,13 @@ def test_cpu_stop_failure_does_not_leave_node_busy(rig):
     lock.on_unlock.__globals__['cpu_reserve'] = cpu
     assert lock.on_unlock(None, NS()).success
     assert not lock.busy
+
+
+def test_event_failure_does_not_change_completed_pulse(rig):
+    lock, light, clock, timeline = rig
+    def fail(_):
+        raise RuntimeError('ROS event unavailable')
+    lock.pub_event.publish = fail
+    assert lock.on_unlock(None, NS()).success
+    assert timeline[1][1] - timeline[0][1] == pytest.approx(.4)
+    assert not lock.busy and light.power_until == 0

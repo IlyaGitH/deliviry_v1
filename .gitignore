@@ -4,3 +4,9 @@ log/
 __pycache__/
 *.pyc
 .vscode/
+
+# Never commit provisioned credentials or sensor archives
+atsd-access/
+*.p12
+*.key
+*.encrypted
