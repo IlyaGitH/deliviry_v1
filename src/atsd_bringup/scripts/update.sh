@@ -15,6 +15,13 @@ bash "${SRC_DIR}/atsd_bringup/security/install.sh" --dependencies-only
 BACKUP_DIR=$(mktemp -d /opt/atsd/update-backup-XXXXXXXX)
 cp -a "${WS_DIR}/src" "${BACKUP_DIR}/src"
 systemctl stop atsd.target
+# ament_python symlink builds retain removed files (glob in setup.py sees dangling
+# links). Rebuild generated trees cleanly; keep the previous build for diagnosis.
+for generated in build install; do
+  if [[ -e "${WS_DIR}/${generated}" ]]; then
+    mv "${WS_DIR}/${generated}" "${BACKUP_DIR}/${generated}"
+  fi
+done
 bash "${SRC_DIR}/atsd_bringup/scripts/remove_lock_cpu.sh"
 rsync -a --delete --exclude __pycache__/ --exclude '*.pyc' "${SRC_DIR}/" "${WS_DIR}/src/"
 bash "${WS_DIR}/src/atsd_bringup/scripts/install_vision_model.sh"
