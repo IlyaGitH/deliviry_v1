@@ -27,6 +27,7 @@ install -m 644 "${WS_DIR}"/src/atsd_bringup/systemd/*.service /etc/systemd/syste
 install -m 644 "${WS_DIR}/src/atsd_bringup/systemd/atsd.target" /etc/systemd/system/
 install -m 644 "${WS_DIR}/src/atsd_bringup/udev/99-atsd.rules" /etc/udev/rules.d/
 udevadm control --reload-rules
+bash "${WS_DIR}/src/atsd_bringup/scripts/configure_ap_only.sh"
 bash "${WS_DIR}/src/atsd_bringup/security/install.sh"
 systemctl daemon-reload
 systemctl enable NetworkManager atsd-wifi
@@ -35,5 +36,5 @@ if ! systemctl is-active --quiet atsd-wifi; then
   systemctl start atsd-wifi
 fi
 echo "Обновление завершено. Предыдущие исходники: ${BACKUP_DIR}/src"
-echo 'Уже работающий сервис Wi-Fi использует старый скрипт до перезагрузки Pi.'
+echo 'Постоянная раздача настроена. Перезагрузите Pi: текущую SSH-сессию обновление не отключает.'
 echo 'Этот скрипт не прошивает VEX. Если его прошивка соответствует репозиторию, повторная загрузка не нужна.'

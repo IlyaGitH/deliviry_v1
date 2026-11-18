@@ -1,5 +1,5 @@
 [Unit]
-Description=ATSD | Wi-Fi: известная сеть, иначе своя точка доступа
+Description=ATSD | Wi-Fi: постоянная точка доступа
 After=NetworkManager.service
 Requires=NetworkManager.service
 
