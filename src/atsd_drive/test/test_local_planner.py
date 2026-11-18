@@ -49,8 +49,8 @@ def test_partial_front_scan_never_authorizes_reverse():
     assert s.arc((0,0,0),-.4,0.) is None
 
 
-@pytest.mark.parametrize('changes,state', [({'scan_age':.46},'stale_scan'),
-    ({'scan_age':-.01},'stale_scan'),({'odom_age':.36},'stale_odometry'),
+@pytest.mark.parametrize('changes,state', [({'scan_age':LocalCfg().scan_timeout+.01},'stale_scan'),
+    ({'scan_age':-.01},'stale_scan'),({'odom_age':LocalCfg().odom_timeout+.01},'stale_odometry'),
     ({'measured_v':float('nan')},'invalid_input')])
 def test_stale_or_invalid_sensor_stops(changes,state):
     d=command(LocalPlanner(),space(),**changes)

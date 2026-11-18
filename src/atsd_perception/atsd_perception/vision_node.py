@@ -10,6 +10,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
+from atsd_perception.sign_passage import SignPassage
 from atsd_perception.lane_logic import BirdView, LaneCfg, LaneTracker, detect_lane
 from atsd_perception.vision_logic import (CameraGeom, Confirm, LightHsv, SpotCfg, classify_light, largest_sign, model_light_color,
                                          distance_from_height, find_red_spot, ground_to_pixel)
@@ -86,6 +87,10 @@ class VisionNode(Node):
                 self.classes[str(name)] = kind
         self.classes.update({'traffic_light_red': 'LIGHT', 'traffic_light_green': 'LIGHT'})
         self.hsv = LightHsv(int(p('hsv_s_min')), int(p('hsv_v_min')))
+        self.sign_tracks = SignPassage(6)
+        self.sign_lock = threading.Lock()
+        self.sign_mission = None
+        self.create_subscription(String, "mission/state", self.on_sign_mission, 10)
         self.sign_conf = {k: Confirm(int(p('sign_confirm')), 3) for k in ('STOP', 'CROSS', 'BUMP')}
         self.light_conf = Confirm(int(p('light_confirm')), int(p('light_confirm')) + 1)
         self.last_light_seen = 0.0
@@ -122,6 +127,8 @@ class VisionNode(Node):
                 clutter_max=float(p('lane_clutter_max'))))
         self.pub_dbg = self.create_publisher(CompressedImage, 'perception/debug/compressed', 2)
 
+        self.frame_seq = 0
+        self.frame_time = 0.0
         self.frame = None
         self.frame_lock = threading.Lock()
         self.running = True
@@ -134,6 +141,16 @@ class VisionNode(Node):
         self.load_model()
         threading.Thread(target=self.capture_loop, daemon=True).start()
         threading.Thread(target=self.infer_loop, args=(float(p('infer_hz')),), daemon=True).start()
+
+    def on_sign_mission(self, msg):
+        try:
+            state = json.loads(msg.data).get('state')
+        except (ValueError, TypeError):
+            return
+        with self.sign_lock:
+            if state != self.sign_mission:
+                self.sign_tracks = SignPassage(6)
+                self.sign_mission = state
 
     def load_model(self):
         backend = self.P['backend']
@@ -189,16 +206,21 @@ class VisionNode(Node):
                 continue
             with self.frame_lock:
                 self.frame = frame
+                self.frame_seq += 1
+                self.frame_time = time.monotonic()
         if cap is not None:
             cap.release()
 
     def infer_loop(self, hz):
         period = 1.0 / hz
+        last_seq = -1
         while self.running and rclpy.ok():
             t0 = time.monotonic()
             with self.frame_lock:
-                frame = None if self.frame is None else self.frame.copy()
+                seq = self.frame_seq
+                frame = None if self.frame is None or seq == last_seq or t0-self.frame_time > .5 else self.frame.copy()
             if frame is not None:
+                last_seq = seq
                 try:
                     self.process(frame)
                 except Exception as e:
@@ -248,7 +270,7 @@ class VisionNode(Node):
 
         seen = {'STOP': None, 'CROSS': None, 'BUMP': None}
         best_light = None
-        selected_sign = largest_sign(dets)
+        selected_sign = largest_sign([d for d in dets if d.get('kind') == 'CROSS'])
         for det in dets:
             x1, y1, x2, y2 = det['box']
             h = y2 - y1
@@ -268,10 +290,15 @@ class VisionNode(Node):
                 dist = max(0.0, dist - self.P['camera_to_front_m'])
                 det['dist'] = round(dist, 2)
                 det['selected'] = det is selected_sign
-                if det is selected_sign and dist <= self.P['max_sign_distance_m']:
+                if det is selected_sign:
                     prev = seen[det['kind']]
                     if prev is None or dist < prev:
                         seen[det['kind']] = dist
+
+        with self.sign_lock:
+            if self.sign_mission in ('TO_PICKUP', 'TO_DROP', 'RETURN'):
+                for kind in self.sign_tracks.update(dets, time.monotonic()):
+                    self.pub_sign.publish(String(data=f'{kind}_PASS 1.5'))
 
         for kind, dist in seen.items():
             confirmed = self.sign_conf[kind].update(kind if dist is not None else None)

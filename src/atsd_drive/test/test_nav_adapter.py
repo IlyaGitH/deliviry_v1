@@ -74,7 +74,7 @@ def test_tick_requires_lidar_and_stops_after_scan_loss(adapter):
     node.tick();node.publish_command.assert_called_with(0.,0.)
     node.on_scan(scan());node.tick()
     assert node.publish_command.call_args.args[0]>0
-    clock[0]=10.6;node.odom_t=10.6;node.tick()
+    clock[0]=10.+node.local.cfg.scan_timeout+.01;node.odom_t=clock[0];node.tick()
     node.publish_command.assert_called_with(0.,0.)
     assert node.avoidance.state=='stale_scan'
 
@@ -83,7 +83,7 @@ def test_expired_during_search_is_not_published_as_fresh_motion(adapter):
     _,node,clock=adapter
     node.on_scan(scan())
     def slow_search(*a,**kw):
-        clock[0]=10.5
+        clock[0]=10.+max(node.local.cfg.scan_timeout,node.local.cfg.odom_timeout)+.01
         return Decision(.25,0.,'avoid')
     node.local.decide=slow_search
     node.tick()

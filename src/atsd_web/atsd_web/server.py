@@ -276,7 +276,9 @@ def action_role(request, requested):
 
 @app.get('/login')
 def login_page():
-    return HTMLResponse((STATIC / 'login.html').read_text(), headers={'Cache-Control':'no-store'})
+    html = (STATIC / 'login.html').read_text()
+    html = html.replace('/static/login.js', f'/static/login.js?v={int((STATIC / "login.js").stat().st_mtime)}')
+    return HTMLResponse(html, headers={'Cache-Control':'no-store'})
 
 
 @app.post('/api/security/login')

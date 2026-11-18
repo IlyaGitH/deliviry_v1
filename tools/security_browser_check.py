@@ -127,6 +127,7 @@ try:
    client=guest.new_page();guest_errors=[]
    client.on('pageerror',lambda e:guest_errors.append(str(e)))
    client.goto(link)
+   assert client.locator('#secret').is_hidden()
    client.click('button[type=submit]')
    client.wait_for_url(url+'/',timeout=10000)
    client.locator('#roleLabel').filter(has_text=('вы отправитель' if role=='sender' else 'вы получатель')).wait_for()
@@ -137,6 +138,24 @@ try:
    assert guest.request.get(url+'/debug/frame.jpg').status==403
    client.screenshot(path=str(TMP/(role+'.png')))
    guest.close()
+  # Reissue links, then switch the administrator's own browser into both roles.
+  page.goto(url+'/')
+  page.locator('#btnAccess').wait_for(state='visible')
+  page.click('#btnAccess')
+  page.locator('#orderLinks:not(.hidden)').wait_for()
+  same_sender=page.locator('#lkSender').input_value()
+  same_receiver=page.locator('#lkReceiver').input_value()
+  for link,role in [(same_sender,'sender'),(same_receiver,'receiver')]:
+   page.goto(link)
+   assert page.locator('#secret').is_hidden()
+   page.click('button[type=submit]')
+   page.wait_for_url(url+'/',timeout=10000)
+   assert context.request.get(url+'/api/security/me').json()['role']==role
+   assert context.request.get(url+'/api/orders').status==403
+  page.goto(url+'/login#role=receiver&order=missing')
+  assert page.locator('button[type=submit]').is_disabled()
+  assert 'Ссылка неполная' in page.locator('#result').inner_text()
+  assert not errors,errors
   browser.close()
  print('PASS: mTLS rejects no certificate; valid CA/server/client works; Chromium admin/dashboard/debug plus sender and receiver with separate certificates')
 finally:
