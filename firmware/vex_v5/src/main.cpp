@@ -25,7 +25,7 @@ namespace cfg {
 
 const gearSetting GEARSET        = ratio18_1;
 const double MOTOR_MAX_RPM       = 200.0;
-const double WHEEL_DIAM_MM       = 90.3;
+const double WHEEL_DIAM_MM       = 101.6;
 const double WHEEL_PER_MOTOR_REV = 1.0;
 const double TRACK_EFF_MM        = 430.0;
 
