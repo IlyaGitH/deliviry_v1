@@ -36,7 +36,7 @@ MISSION_STATES = ('IDLE', 'TO_PICKUP', 'WAIT_LOAD', 'TO_DROP',
                   'WAIT_UNLOAD', 'DONE', 'RETURN', 'FAULT')
 TRAVEL_STATES = ('TO_PICKUP', 'TO_DROP', 'RETURN')
 
-SIGN_KINDS = ('STOP', 'CROSS', 'BUMP', 'STOP_PASS', 'BUMP_PASS')
+SIGN_KINDS = ('STOP', 'CROSS', 'BUMP')
 LIGHT_COLORS = ('R', 'Y', 'G', 'N')
 SIDES = ('L', 'R', 'B', '?')
 

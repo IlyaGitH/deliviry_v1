@@ -50,7 +50,7 @@ int main() {
 
 def test_actual_travel_tick_honors_pauses_and_faults_before_reverse(tmp_path):
     source = (Path(__file__).resolve().parents[3] / 'firmware/vex_v5/src/main.cpp').read_text()
-    functions = source.split('// BEGIN PASSAGE_QUEUE:')[1].split('\n',1)[1].split('// END PASSAGE_QUEUE')[0] + '\nPassageQueue passedSigns;\ndouble zoneBumpEnd=-1;\n'
+    functions = ''
     for prefix in ('static void constrainTravelArc', 'static void travelTick'):
         functions += prefix + source.split(prefix, 1)[1].split('\n}', 1)[0] + '\n}\n'
     test = tmp_path / 'travel.cpp'
@@ -61,7 +61,7 @@ def test_actual_travel_tick_honors_pauses_and_faults_before_reverse(tmp_path):
 #include <cstring>
 namespace cfg {
 const double V_CRUISE=800, V_CREEP=100, DECEL_PLAN=450, OBST_STOP_MM=450, OBST_SLOW_MM=1800;
-const double V_BACKUP=180, W_MAX=2, STOP_IGNORE_MM=1000, BUMP_ZONE_MM=2000;
+const double V_BACKUP=180, W_MAX=2, STOP_IGNORE_MM=1000;
 const uint32_t STOP_HOLD_MS=3000, NAV_CMD_TIMEOUT_MS=300, NAV_LOST_MS=20000;
 }
 struct {bool sideDead=false,stall=false;} hl;
@@ -96,13 +96,6 @@ int main(){
   nav.last=999;obst.dist=400;nav.v=250;nav.w=.25;
   travelTick(v,w);assert(v==0&&w==0);
   nav.v=-150;nav.w=.15;travelTick(v,w);assert(v==-150&&w==.15);
-  obst.dist=0;nav.v=250;nav.w=0;
-  assert(passedSigns.add(1,0));assert(passedSigns.add(2,100));
-  tripMm=1499;travelTick(v,w);assert(!stopSign.pending&&zoneBumpEnd==-1);
-  tripMm=1500;travelTick(v,w);assert(stopSign.holding&&v==0);
-  tripMm=1600;travelTick(v,w);assert(zoneBumpEnd==3600);
-  tripMm=1700;travelTick(v,w);assert(zoneBumpEnd==3600);
-
 }
 ''')
     executable = tmp_path / 'travel'

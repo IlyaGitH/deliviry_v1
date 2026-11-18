@@ -65,11 +65,3 @@ def test_odom_continues_after_brain_reboot():
     x, y, _ = p.apply_offset(off, (1.0, 0.0, 0.0))
     assert abs(x - (3.0 + math.cos(last[2]))) < 1e-9 and abs(y - (-2.0 + math.sin(last[2]))) < 1e-9
     assert p.apply_offset((0.0, 0.0, 0.0), (1.0, 2.0, 0.5)) == (1.0, 2.0, 0.5)
-
-
-def test_passage_events_preserve_kind_and_distance():
-    from atsd_drive.protocol import parse_sign_msg, cmd_sign
-    for kind in ('STOP_PASS','BUMP_PASS'):
-        parsed=parse_sign_msg(kind+' 1.5')
-        assert parsed==(kind,1.5)
-        assert cmd_sign(*parsed)==f'F {kind} 1500\n'

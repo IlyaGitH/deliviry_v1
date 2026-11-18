@@ -17,10 +17,6 @@ let previewPlan = null;
 let mapPan = {x:0,y:0};
 
 const EVENT_RU = {
-  SIGN_PASSED: 'Знак исчез из кадра — действие через 1,5 м',
-  STOP_SIGN_AFTER_PASS: 'После знака пройдено 1,5 м — остановка',
-  BUMP_SLOW_AFTER_PASS: 'После знака пройдено 1,5 м — замедление на 2 м',
-  SIGN_QUEUE_FULL: 'Переполнена очередь знаков',
   SECURITY_REAR_INTRUSION: 'Тревога: объект в задней части корпуса; движение не изменено',
   LOCK_PULSE: 'Подан импульс открытия замка',
   ORDER_SERVER_LOST: 'Сервер заказов недоступен — пауза привода',

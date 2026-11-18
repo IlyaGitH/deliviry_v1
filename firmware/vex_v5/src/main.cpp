@@ -12,7 +12,7 @@ using namespace vex;
 
 namespace atsd {
 
-#define FW_VERSION "3.0.10"
+#define FW_VERSION "3.0.9"
 
 #define ATSD_USE_STDIO 0  // 1, если в SDK нет vexSerialReadChar
 
@@ -65,7 +65,7 @@ const double   STOP_IGNORE_MM       = 2500.0;
 const double   CROSS_ZONE_MM        = 2000.0;
 const double   CROSS_FACTOR         = 0.5;
 // BUMP в протоколе — знак «искусственная неровность», полученный от Pi.
-const double   BUMP_ZONE_MM         = 2000.0;
+const double   BUMP_ZONE_MM         = 1800.0;
 const double   BUMP_FACTOR          = 0.35;
 const double   LIGHT_STOP_OFFSET_MM = 450.0;
 
@@ -165,24 +165,6 @@ enum { P_ESTOP = 1, P_LINK = 2, P_STOPSIGN = 4, P_RED = 8, P_OBST = 16, P_EXT = 
 int pauseMask = 0;
 
 struct StopSign { bool pending = false, holding = false; double stopAt = 0; uint32_t holdUntil = 0; double ignoreUntil = -1; } stopSign;
-// BEGIN PASSAGE_QUEUE: independently testable odometry-based delayed events.
-struct PassageQueue {
-  struct Item { int kind; double at; bool used; } items[16] = {};
-  bool add(int kind, double trip) {
-    for (auto &item : items) if (!item.used) {
-      item = {kind, trip + 1500.0, true}; return true;
-    }
-    return false;
-  }
-  int take(double trip) {
-    for (auto &item : items) if (item.used && trip >= item.at) {
-      item.used = false; return item.kind;
-    }
-    return 0;
-  }
-};
-// END PASSAGE_QUEUE
-PassageQueue passedSigns;
 double zoneCrossEnd = -1, zoneBumpEnd = -1;
 struct Light { bool red = false; double stopAt = 0; char last = 'N'; } tLight;
 struct Obst { int dist = 0; char side = '?'; uint32_t last = 0; } obst;
@@ -287,7 +269,6 @@ static int rxThread() {
 }
 
 static void resetTravelBehaviours() {
-  passedSigns = PassageQueue();
   stopSign = StopSign();
   tLight = Light();
   obstWait = ObstWait();
@@ -549,16 +530,6 @@ static void travelTick(double& v, double& w) {
   // Only Pi's lidar-checked planner may request reverse travel. Fault requires resume.
   if (hl.stall) { missionFault("STALL"); return; }
 
-  // Distances are measured by wheel odometry, not elapsed time or camera range.
-  for (int kind = passedSigns.take(tripMm); kind; kind = passedSigns.take(tripMm)) {
-    if (kind == 1 && !stopSign.pending && !stopSign.holding) {
-      stopSign.pending = true; stopSign.stopAt = tripMm;
-      logEvent("STOP_SIGN_AFTER_PASS");
-    } else if (kind == 2) {
-      zoneBumpEnd = tripMm + cfg::BUMP_ZONE_MM;
-      logEvent("BUMP_SLOW_AFTER_PASS");
-    }
-  }
   double vLim = cfg::V_CRUISE * speedFactor(true);
 
   if (!piLink.ok) pauseMask |= P_LINK;
@@ -726,13 +697,7 @@ static void handleLine(char* line, bool local) {
   } else if (!strcmp(c, "F") && n >= 2) {
     double dist = n >= 3 ? atof(tok[2]) : 0;
     if (dist < 0) dist = 0;
-    if (!strcmp(tok[1], "STOP_PASS") || !strcmp(tok[1], "BUMP_PASS")) {
-      if (isTravel(ms.st)) {
-        int kind = !strcmp(tok[1], "STOP_PASS") ? 1 : 2;
-        if (!passedSigns.add(kind, tripMm)) missionFault("SIGN_QUEUE_FULL");
-        else logEvent("SIGN_PASSED %s", tok[1]);
-      }
-    } else if (!strcmp(tok[1], "STOP")) {
+    if (!strcmp(tok[1], "STOP")) {
       if (isTravel(ms.st) && tripMm >= stopSign.ignoreUntil && !stopSign.pending && !stopSign.holding) {
         double rem = dist - cfg::STOP_SIGN_OFFSET_MM;
         stopSign.pending = true;
@@ -742,12 +707,12 @@ static void handleLine(char* line, bool local) {
     } else if (!strcmp(tok[1], "CROSS")) {
       if (isTravel(ms.st)) {
         if (tripMm >= zoneCrossEnd) logEvent("CROSSWALK_SLOW");
-        zoneCrossEnd = fmax(zoneCrossEnd, tripMm + cfg::CROSS_ZONE_MM);
+        zoneCrossEnd = fmax(zoneCrossEnd, tripMm + dist + cfg::CROSS_ZONE_MM);
       }
     } else if (!strcmp(tok[1], "BUMP")) {
       if (isTravel(ms.st)) {
         if (tripMm >= zoneBumpEnd) logEvent("BUMP_SLOW");
-        zoneBumpEnd = fmax(zoneBumpEnd, tripMm + cfg::BUMP_ZONE_MM);
+        zoneBumpEnd = fmax(zoneBumpEnd, tripMm + dist + cfg::BUMP_ZONE_MM);
       }
     } else ok = false;
   } else if (!strcmp(c, "T") && n >= 2) {
