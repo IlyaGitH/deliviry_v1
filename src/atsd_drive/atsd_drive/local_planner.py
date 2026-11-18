@@ -34,8 +34,8 @@ class LocalCfg:
     forward_speed: float = .25
     reverse_speed: float = .15
     allow_reverse: bool = True  # user verified unobstructed 360-degree lidar coverage
-    scan_timeout: float = .45
-    odom_timeout: float = .35
+    scan_timeout: float = .70
+    odom_timeout: float = .50
     deceleration: float = .35  # conservative; measure under load
     latency: float = .65  # DDS command age + Brain watchdog + control-cycle allowance
     step: float = .40
