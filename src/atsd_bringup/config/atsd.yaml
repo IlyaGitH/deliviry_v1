@@ -109,7 +109,7 @@ obstacle_node:
     front_x: 0.64            # передняя грань: laser_x + 0.35 м
     half_width: 0.20         # от лидара вправо/влево по 0.20 м
     margin: 0.10
-    look_ahead: 2.5
+    look_ahead: 1.0
     detour_offset: 0.65
     min_points: 3
     default_side: L

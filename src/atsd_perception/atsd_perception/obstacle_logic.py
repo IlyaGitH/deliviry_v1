@@ -8,7 +8,7 @@ class CorridorConfig:
     front_x: float = 0.35
     half_width: float = 0.25
     margin: float = 0.10
-    look_ahead: float = 2.5
+    look_ahead: float = 1.0
     detour_offset: float = 0.65
     side_extra: float = 1.2
     min_points: int = 3

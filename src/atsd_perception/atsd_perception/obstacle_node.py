@@ -24,7 +24,7 @@ class ObstacleNode(Node):
         d('half_width', 0.25)
         d('margin', 0.10)  # legacy parameter
         d('corridor_width_m', 0.50)
-        d('look_ahead', 2.5)
+        d('look_ahead', 1.0)
         d('detour_offset', 0.65)
         d('min_points', 3)
         d('default_side', 'L')

@@ -174,3 +174,16 @@ def test_largest_sign_across_classes_and_light_model():
     assert model_light_color('traffic_light_green') == 'G'
     assert model_light_color('traffic_light_yellow') is None
     assert classify_light(light('Y'))[0] is None
+
+
+def test_one_metre_threshold_is_measured_from_front_not_lidar():
+    cfg = CorridorConfig(front_x=.64, half_width=.25, margin=0)
+    for clearance in (.99, 1.01, 2.0):
+        # LiDAR is 35 cm behind the front, mounted 29 cm ahead of base_link.
+        ranges = [clearance+.35]*3
+        pts = scan_to_xy(ranges,-.001,.001,.05,12,laser_x=.29)
+        distance,_,_ = analyze(pts,cfg)
+        if clearance < 1:
+            assert distance is not None and abs(distance-clearance)<.001
+        else:
+            assert distance is None

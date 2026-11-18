@@ -278,6 +278,7 @@ else
 fi
 
 bash "${WS_DIR}/src/atsd_bringup/scripts/install_vision_model.sh"
+bash "${WS_DIR}/src/atsd_bringup/scripts/configure_obstacle.sh"
 log "Ставлю сервисы и правила"
 bash "${SRC_DIR}/atsd_bringup/scripts/remove_lock_cpu.sh"
 install -m 755 "${WS_DIR}/src/atsd_bringup/systemd/run.sh" "${ATSD_HOME}/run.sh"
