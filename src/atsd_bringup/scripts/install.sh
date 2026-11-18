@@ -220,20 +220,21 @@ fi
 if [[ ! -f /etc/atsd/wifi.conf ]]; then
   AP_PASS_NEW="$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 10 || true)"
   cat > /etc/atsd/wifi.conf <<WIFICONF
-# Постоянная точка доступа без подключения к известным сетям
+# Известная сеть, иначе раздача через 20 секунд
 AP_SSID=ATSD-1M
 AP_PASS=${AP_PASS_NEW}
 AP_ADDR=10.42.0.1/24
 AP_BAND=bg
 AP_CHANNEL=0
-AP_ONLY=1
+AP_ONLY=0
 AP_RETRY_ENABLED=0
-WAIT_S=60
+WAIT_S=20
+STABLE_S=5
 IFACE=wlan0
 WIFICONF
   chmod 600 /etc/atsd/wifi.conf
 fi
-bash "${SRC_DIR}/atsd_bringup/scripts/configure_ap_only.sh"
+bash "${SRC_DIR}/atsd_bringup/scripts/configure_wifi.sh"
 AP_INFO="$(grep -E '^AP_(SSID|PASS)=' /etc/atsd/wifi.conf | tr '\n' ' ')"
 
 log "Копирую исходники в ${WS_DIR}"
@@ -322,7 +323,7 @@ cat <<MSG
 
   1. Перезагрузиться — применятся config.txt, группы пользователя и Wi-Fi:
        sudo reboot
-     Робот сразу поднимет свою точку доступа: ${AP_INFO}(/etc/atsd/wifi.conf),
+     Робот подключится к известной сети, иначе через 20 секунд поднимет свою: ${AP_INFO}(/etc/atsd/wifi.conf),
      веб-интерфейс тогда на https://10.42.0.1/
      Экспортируйте сертификаты (вместо ИМЯ — ваш SSH-пользователь):
        sudo /usr/bin/python3 -I /usr/local/libexec/atsd-security.py export ИМЯ

@@ -117,7 +117,7 @@ def test_ap_fixed_channel_is_preserved():
 
 def test_ap_only_overrides_known_network_and_retries_without_scanning():
     out = run('''
-      [[ $AP_ONLY == 1 ]] || exit 1; t=0; attempts=0; state=100; connection=home; AP_RETRY_ENABLED=1
+      AP_ONLY=1; t=0; attempts=0; state=100; connection=home; AP_RETRY_ENABLED=1
       nmcli() {
         case "$*" in
           *'autoconnect yes'*|*'wifi list'*|*'con down'*) echo FORBIDDEN >&2; exit 9;;
@@ -137,3 +137,32 @@ def test_ap_only_overrides_known_network_and_retries_without_scanning():
     ''')
     assert 'ATTEMPTS=2' in out
     assert 'Постоянная точка' in out
+
+
+def test_default_fallback_starts_at_twenty_seconds():
+    out = run('''
+      [[ $AP_ONLY == 0 && $WAIT_S == 20 && $STABLE_S == 5 ]] || exit 1
+      t=100
+      date() { echo "$t"; }
+      sleep() { t=$((t+POLL_S)); if ((t>130)); then exit 2; fi; }
+      nmcli() { return 0; }
+      dev_state() { echo '30 (disconnected)'; }
+      start_ap() { echo "START=$t"; exit 0; }
+      main
+    ''')
+    assert 'START=120' in out
+
+
+def test_default_stability_window_keeps_known_network_before_fallback():
+    out = run('''
+      t=100
+      date() { echo "$t"; }
+      sleep() { t=$((t+POLL_S)); if ((t>140)); then exit 0; fi; }
+      nmcli() { return 0; }
+      dev_state() { echo '100 (connected)'; }
+      dev_conn() { echo home; }
+      signal() { echo 80; }
+      start_ap() { echo UNEXPECTED_AP; exit 2; }
+      main
+    ''')
+    assert 'UNEXPECTED_AP' not in out
