@@ -430,7 +430,7 @@ class RosLink:
         if self.mock:
             self._set(['lock', 'busy'], True)
             threading.Timer(0.6, lambda: self._set(['lock', 'busy'], False)).start()
-            return True, 'Замок открыт (имитация)'
+            return True, 'Имитация: команда принята, физический GPIO не включается'
         if self._node is None:
             return False, 'Мост ROS не поднят'
         if not self._unlock_cli.wait_for_service(timeout_sec=1.0):

@@ -14,6 +14,8 @@ let settingPose = null;  // null | 'pos' | {x, y} — «Робот здесь»
 let localPoints = null;
 let roadEditor = null, roadView = null, roadRevision = null, roadDelete = false;
 let previewPlan = null;
+let unlockPending = false;
+let unlockResult = "";
 let mapPan = {x:0,y:0};
 
 const EVENT_RU = {
@@ -340,8 +342,9 @@ function updateActions(o) {
   const mine = (ROLE === 'sender' && o.status === 'at_pickup') ||
                (ROLE === 'receiver' && o.status === 'at_dropoff');
 
-  bu.disabled = !mine;
-  bd.disabled = !mine;
+  bu.disabled = !mine || unlockPending;
+  bd.disabled = !mine || unlockPending;
+  bu.textContent = unlockPending ? "Ожидаю ответ замка…" : "Открыть отсек";
   bd.textContent = ROLE === 'sender' ? 'Готово, груз внутри' : 'Готово, груз забрал';
 
   if (mine) {
@@ -356,11 +359,26 @@ function updateActions(o) {
 }
 
 $('btnUnlock').onclick = async () => {
+  if (unlockPending) return;
+  const o = LAST && LAST.order;
+  if (!o) return;
+  unlockPending = true;
+  unlockResult = 'Отправляю запрос открытия…';
+  $('unlockResult').textContent = unlockResult;
+  updateActions(o);
   try {
-    const o = LAST && LAST.order;
-    await api(`/api/orders/${o.id}/unlock?role=${ROLE}`, { method: 'POST' });
-    toast('Отсек открыт');
-  } catch (e) { toast(e.message, true); }
+    const result = await api(`/api/orders/${o.id}/unlock?role=${ROLE}`, { method: 'POST' });
+    if (result.ok !== true) throw new Error(result.message || 'Открытие не подтверждено');
+    unlockResult = result.message || 'Запрос выполнен; проверьте отсек';
+    toast(unlockResult);
+  } catch (e) {
+    unlockResult = e.message || 'Нет ответа — результат открытия неизвестен';
+    toast(unlockResult, true);
+  } finally {
+    unlockPending = false;
+    $('unlockResult').textContent = unlockResult;
+    updateActions(LAST && LAST.order);
+  }
 };
 
 $('btnResume').onclick = async () => {

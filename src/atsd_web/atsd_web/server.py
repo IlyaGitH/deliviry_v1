@@ -530,7 +530,9 @@ def api_unlock(oid: str, role: str = 'sender', request: Request = None):
     allowed = {'sender': ('at_pickup',), 'receiver': ('at_dropoff',)}
     if order['status'] not in allowed.get(role, ()):
         raise HTTPException(409, 'Сейчас отсек открывать нельзя')
+    print(f'Запрос замка: заказ={oid}, роль={role}, имитация={link.mock}', flush=True)
     ok, msg = link.unlock()
+    print(f'Ответ замка: заказ={oid}, success={ok}, {msg}', flush=True)
     if not ok:
         raise HTTPException(503, msg)
     with _store_lock:

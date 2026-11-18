@@ -48,6 +48,7 @@ def rig():
     lock.zone_policy = 'off'
     lock.last_pulse = 0
     lock.cooldown = 3
+    lock.lock_pin = 19
     lock.pulse_time = .4
     lock.get_logger = lambda: NS(info=lambda _: None, error=lambda _: None)
     lock.pub_busy = NS(publish=lambda m: setattr(light, 'lock_busy', m.data))
@@ -56,9 +57,10 @@ def rig():
     lock.pub_event = NS(publish=lambda m: lock.audit_events.append(m.data))
     light.pub_ready = NS(publish=lock.on_power_ready)
     def on():
+        lock.dev.value = True
         light.tick()  # regular signal commands must not restore lights
         timeline.append(('on', clock.now, light.head.dev.value, light.strip.dev.value))
-    lock.dev = NS(on=on, off=lambda: timeline.append(('off', clock.now)))
+    lock.dev = NS(value=False, on=on, off=lambda: timeline.append(('off', clock.now)))
     return lock, light, clock, timeline
 
 
@@ -158,3 +160,20 @@ def test_event_failure_does_not_change_completed_pulse(rig):
     assert lock.on_unlock(None, NS()).success
     assert timeline[1][1] - timeline[0][1] == pytest.approx(.4)
     assert not lock.busy and light.power_until == 0
+
+
+@pytest.mark.parametrize('duration',[0.,-.4,float('nan'),float('inf')])
+def test_invalid_pulse_cannot_report_success(rig,duration):
+    lock,_,_,timeline=rig
+    lock.pulse_time=duration
+    response=lock.on_unlock(None,NS())
+    assert not response.success and not timeline
+
+
+def test_gpio_not_activated_returns_failure_and_releases_lights(rig):
+    lock,light,_,timeline=rig
+    lock.dev.on=lambda: None
+    response=lock.on_unlock(None,NS())
+    assert not response.success and 'GPIO' in response.message
+    assert not lock.busy and not light.power_until
+    assert not lock.audit_events

@@ -169,3 +169,19 @@ def test_unlock_waits_for_light_reservation_and_gpio(monkeypatch):
                 result=lambda: NS(success=True, message='Импульс открытия подан'))
     link._unlock_cli = NS(wait_for_service=lambda **kw: True, call_async=lambda _: future)
     assert link.unlock() == (True, 'Импульс открытия подан')
+
+
+@pytest.mark.parametrize('role,status',[('sender','at_pickup'),('receiver','at_dropoff')])
+def test_unlock_relays_service_result_for_each_role(web,monkeypatch,role,status):
+    client,link=web
+    order={'id':'abcd1234','status':status}
+    server.save_orders([order])
+    monkeypatch.setattr(link,'unlock',lambda:(False,'GPIO замка недоступен — импульс не подан'))
+    response=client.post(f'/api/orders/abcd1234/unlock?role={role}')
+    assert response.status_code==503 and 'GPIO' in response.json()['detail']
+    assert not server.orders()[0].get('unlocks')
+    message='Импульс открытия подан; проверьте, открылся ли отсек'
+    monkeypatch.setattr(link,'unlock',lambda:(True,message))
+    response=client.post(f'/api/orders/abcd1234/unlock?role={role}')
+    assert response.json()=={'ok':True,'message':message}
+    assert server.orders()[0]['unlocks'][0]['role']==role

@@ -56,10 +56,11 @@ class LockNode(Node):
         self.door = None
         if not dry and GPIO_OK:
             self.dev = DigitalOutputDevice(self.lock_pin, active_high=True, initial_value=False)
+            self.get_logger().info(f'Драйвер замка: {type(self.dev.pin_factory).__name__}, активный уровень HIGH')
             if self.use_door:
                 self.door = Button(self.door_pin, pull_up=True, bounce_time=0.05)
         elif not dry:
-            self.get_logger().warn('gpiozero недоступен — узел работает вхолостую.')
+            self.get_logger().error('gpiozero недоступен — открытие замка заблокировано.')
 
         self.busy = False
         self.last_pulse = 0.0
@@ -119,9 +120,22 @@ class LockNode(Node):
         return self.door.is_pressed if self.door is not None else True
 
     def on_unlock(self, request, response):
+        self.get_logger().info(f'Запрос открытия: GPIO{self.lock_pin}, состояние {self.mission_state}')
+        try:
+            response = self._unlock(request, response)
+        except Exception as exc:
+            response.success = False
+            response.message = f'Ошибка открытия, результат не подтверждён: {exc}'
+        self.get_logger().info(f'Результат открытия: success={response.success}; {response.message}')
+        return response
+
+    def _unlock(self, request, response):
         response.success = False
         if self.dev is None:
             response.message = 'GPIO замка недоступен — импульс не подан'
+            return response
+        if not 0 < self.pulse_time < float('inf'):
+            response.message = 'Некорректная длительность импульса — импульс не подан'
             return response
         with self.guard:
             if self.block_moving and self.mission_state in TRAVEL:
@@ -162,9 +176,12 @@ class LockNode(Node):
                 return response
             self.get_logger().info('Подаю импульс замка после отключения света')
             self.dev.on()
+            if not self.dev.value:
+                raise RuntimeError('Драйвер GPIO не подтвердил включение выхода')
+            self.get_logger().info(f'GPIO{self.lock_pin}: драйвер подтвердил активный выход')
             time.sleep(min(0.4, max(0.0, self.pulse_time)))
             response.success = True
-            response.message = 'Импульс открытия подан'
+            response.message = 'Импульс открытия подан; проверьте, открылся ли отсек'
         except Exception as e:
             response.success = False
             response.message = f'Ошибка управления замком: {e}'
