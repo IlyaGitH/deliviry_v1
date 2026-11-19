@@ -192,6 +192,31 @@ class LocalPlanner:
     def _key(self, p):
         return (round(p[0]/.2), round(p[1]/.2), round(wrap(p[2])/(math.pi/12)))
 
+    def _rejoin_clear(self, space, pose, goal, horizon):
+        """Preview a converging arc, not several metres at a frozen steering angle.
+
+        This is only an escape/rejoin test. The actual requested command and
+        its full braking sweep are checked separately on every control tick.
+        Unknown cells and collisions still reject the entire preview.
+        """
+        p = tuple(pose)
+        remaining = horizon
+        while remaining > 1e-6:
+            dx, dy = goal[0]-p[0], goal[1]-p[1]
+            distance = math.hypot(dx, dy)
+            if distance < .25:
+                return True
+            lateral = -math.sin(p[2])*dx + math.cos(p[2])*dy
+            k = max(-1/self.cfg.radius, min(1/self.cfg.radius,
+                                          2*lateral/(distance*distance)))
+            step = min(.2, remaining, distance)
+            q = space.arc(p, step, k, planning=True)
+            if q is None or math.dist(q[:2], goal) >= distance:
+                return False
+            p = q
+            remaining -= step
+        return True
+
     def decide(self, space, pose, goal, now, scan_age, measured_v=0., measured_w=0.,
                odom_age=0., world_pose=None, preferred=None, short_reverse_allowed=True):
         c = self.cfg
@@ -268,7 +293,12 @@ class LocalPlanner:
                 # recovery. Let local search choose a manoeuvre that approaches it.
                 progress_pose = advance(pose, min(c.step, distance), k)
                 approaches = math.dist(progress_pose[:2], goal) < distance-.01
-                if approaches and abs(k) <= 1/c.radius + 1e-6 and space.arc(pose, max(horizon, stop_d+.5, target_stop+.1), k, planning=True) is not None:
+                command_clear = (abs(k) <= 1/c.radius + 1e-6 and
+                                 space.arc(pose, max(1.2, stop_d+.5, target_stop+.1),
+                                           k, planning=True) is not None)
+                rejoin_clear = (self.mode != 'avoid' or
+                                (command_clear and self._rejoin_clear(space, pose, goal, horizon)))
+                if approaches and command_clear and rejoin_clear:
                     self.commit = None
                     self.avoid_started = None
                     if self.follow_anchor is None:

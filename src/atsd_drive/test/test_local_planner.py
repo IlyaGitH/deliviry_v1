@@ -268,3 +268,31 @@ def test_half_meter_corridor_keeps_side_walls_out_of_planned_footprint():
         assert np.max(np.abs(footprint[:,1])) == pytest.approx(.25)
     assert s.arc((0,0,0),1.,0.,planning=True) is not None
     assert s.arc((0,0,0),1.,1.,planning=True) is None
+
+
+def test_rejoin_straight_corridor_unwinds_steering_before_hitting_wall():
+    cfg = LocalCfg(front=.64, rear=.26, half_width=.20, radius=.5)
+    walls = [((-2., -.8), (7., -.8)), ((-2., .8), (7., .8))]
+    scan = space(walls, cfg)
+    pose = (0., 0., .15)
+    # The immediate correction is safe, but holding it for 4m turns into a wall.
+    assert scan.arc(pose, 1.2, -.2, planning=True) is not None
+    assert scan.arc(pose, 4., -.2, planning=True) is None
+    planner = LocalPlanner(cfg)
+    planner.mode = 'avoid'
+    planner.avoid_started = 1.
+    result = command(planner, scan, pose=pose, preferred=(.25, -.05))
+    assert result.state == 'following'
+    assert result.w < 0 and result.v > 0
+    assert planner.avoid_started is None
+
+
+def test_rejoin_preview_does_not_accept_wall_beyond_immediate_correction():
+    cfg = LocalCfg(front=.64, rear=.26, half_width=.20, radius=.5)
+    scan = space(rectangle(3., -2., 3.1, 2.), cfg)
+    planner = LocalPlanner(cfg)
+    planner.mode = 'avoid'
+    planner.avoid_started = 1.
+    result = command(planner, scan, pose=(0., 0., .15), preferred=(.25, -.05))
+    assert result.state != 'following'
+    assert planner.avoid_started == 1.
